@@ -2,12 +2,14 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { Profile } from '../domain/types';
 import { loginWithEmail, logout as apiLogout } from './api/authService';
 
-interface AuthContextType {
+export interface AuthContextType {
     user: Profile | null;
     isLoading: boolean;
     login: (email: string, password: string) => Promise<string | null>;
     logout: () => void;
     isAuthenticated: boolean;
+    isAdmin: boolean;
+    isCollaborator: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -16,45 +18,66 @@ import { supabase } from './api/supabase';
 
 // ... (imports)
 
+// Profile cache to avoid redundant fetches during login
+let cachedProfile: Profile | null = null;
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [user, setUser] = useState<Profile | null>(null);
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
-        // Initialize Session
+        // Initialize Session - optimized for speed
         const initAuth = async () => {
+            const startTime = Date.now();
             try {
                 const { data: { session } } = await supabase.auth.getSession();
+                console.log(`Auth: getSession took ${Date.now() - startTime}ms`);
+
                 if (session?.user) {
+                    // Use cached profile if available (from recent login)
+                    if (cachedProfile && cachedProfile.id === session.user.id) {
+                        console.log('Auth: Using cached profile');
+                        setUser(cachedProfile);
+                        setIsLoading(false);
+                        return;
+                    }
+
+                    const profileStart = Date.now();
                     const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-                    setUser(data);
+                    console.log(`Auth: Profile fetch took ${Date.now() - profileStart}ms`);
+
+                    if (data) {
+                        cachedProfile = data;
+                        setUser(data);
+                    }
                 }
             } catch (error) {
                 console.error('Auth Init Error:', error);
             } finally {
+                console.log(`Auth: Total init took ${Date.now() - startTime}ms`);
                 setIsLoading(false);
             }
         };
 
         initAuth();
 
-        // Safety timeout in case Supabase hangs
+        // Reduced timeout (3s instead of 5s) - if Supabase doesn't respond, let user try
         const timeout = setTimeout(() => {
             setIsLoading((prev) => {
                 if (prev) console.warn('Auth timeout - Forcing app load');
                 return false;
             });
-        }, 5000);
+        }, 3000);
 
-        // Listen for changes
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-            if (session?.user) {
-                const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-                setUser(data);
-            } else {
+        // Listen for changes (logout only - login is handled by login function)
+        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+            // Only handle signout events here - login is handled in login() function
+            if (event === 'SIGNED_OUT' || !session) {
+                cachedProfile = null;
                 setUser(null);
+                setIsLoading(false);
             }
-            setIsLoading(false);
+            // For TOKEN_REFRESHED or other events, don't re-fetch profile (already have it)
         });
 
         return () => {
@@ -73,9 +96,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (profile) {
+            // Cache the profile to avoid re-fetch on page reload
+            cachedProfile = profile;
             setUser(profile);
-            // We set loading false here so the UI can proceed immediately
-            // The onAuthStateChange might fire later, which is fine (it will just set the same user)
             setIsLoading(false);
         }
 
@@ -83,14 +106,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
 
     const logout = () => {
-        apiLogout(); // Triggers onAuthStateChange(SIGNED_OUT) -> sets user null
+        apiLogout();
     };
 
-    // ... return
 
+    const isAdmin = user?.rol === 'admin';
+    const isCollaborator = user?.rol === 'colaborador';
 
     return (
-        <AuthContext.Provider value={{ user, isLoading, login, logout, isAuthenticated: !!user }}>
+        <AuthContext.Provider value={{
+            user,
+            isLoading,
+            login,
+            logout,
+            isAuthenticated: !!user,
+            isAdmin,
+            isCollaborator
+        }}>
             {children}
         </AuthContext.Provider>
     );

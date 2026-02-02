@@ -23,6 +23,7 @@ export interface Member {
     fecha_nacimiento?: string; // ISO Date
     estatus: UserStatus;
     fecha_registro: string; // ISO Date
+    colaborador_id?: UUID; // Who registered
 }
 
 // Planes
@@ -54,6 +55,7 @@ export interface Attendance {
     usuario_id: UUID;
     fecha_hora: string; // ISO Date
     turno_id?: UUID;
+    colaborador_id?: UUID;
     permitido: boolean;
 
     usuario?: Member;
@@ -69,4 +71,33 @@ export interface Payment {
     fecha_pago: string; // ISO Date
     colaborador_id: UUID;
     turno_id?: UUID;
+    concepto?: string;
+}
+
+export interface CashCount {
+    [denomination: number]: number;
+}
+
+export interface Expense {
+    id: UUID;
+    turno_id: UUID;
+    monto: number;
+    concepto: string;
+    fecha_hora: string;
+    usuario_id?: UUID;
+}
+
+export interface Shift {
+    id: UUID;
+    colaborador_id: UUID;
+    colaborador_nombre?: string;
+    horario: 'matutino' | 'vespertino';
+    hora_inicio: string;
+    hora_cierre?: string;
+    total_efectivo: number;
+    monto_inicial: number;
+    retiros: number;
+    desglose_cierre?: CashCount;
+    estatus: 'abierto' | 'cerrado';
+    validado_admin?: boolean;
 }

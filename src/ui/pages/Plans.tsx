@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { getPlans, createPlan, togglePlanStatus, type Plan } from '../../logic/api/planService';
+import { useState, useEffect, useCallback } from 'react';
+import { getPlans, createPlan, togglePlanStatus, updatePlan, deletePlan, type Plan } from '../../logic/api/planService';
 import { Plus, X, Clock, DollarSign } from 'lucide-react';
 
 export default function Plans() {
@@ -7,20 +7,37 @@ export default function Plans() {
     const [loading, setLoading] = useState(true);
     const [showForm, setShowForm] = useState(false);
 
+    // Edit State
+    const [editingId, setEditingId] = useState<string | null>(null);
+
     // Form inputs
     const [nombre, setNombre] = useState('');
     const [precio, setPrecio] = useState('');
     const [dias, setDias] = useState('');
 
-    useEffect(() => {
-        loadPlans();
-    }, []);
-
-    const loadPlans = async () => {
+    const loadPlans = useCallback(async () => {
         setLoading(true);
         const data = await getPlans();
         setPlans(data);
         setLoading(false);
+    }, []);
+
+    useEffect(() => {
+        loadPlans();
+    }, [loadPlans]);
+
+    const handleEdit = (plan: Plan) => {
+        setEditingId(plan.id);
+        setNombre(plan.nombre);
+        setPrecio(plan.precio.toString());
+        setDias(plan.duracion_dias.toString());
+        setShowForm(true);
+    };
+
+    const handleCancel = () => {
+        setEditingId(null);
+        setNombre(''); setPrecio(''); setDias('');
+        setShowForm(false);
     };
 
     const handleSave = async (e: React.FormEvent) => {
@@ -28,18 +45,27 @@ export default function Plans() {
         if (!nombre || !precio || !dias) return;
 
         setLoading(true);
-        const success = await createPlan({
-            nombre,
-            precio: Number(precio),
-            duracion_dias: Number(dias)
-        });
+        let success = false;
+
+        if (editingId) {
+            success = await updatePlan(editingId, {
+                nombre,
+                precio: Number(precio),
+                duracion_dias: Number(dias)
+            });
+        } else {
+            success = await createPlan({
+                nombre,
+                precio: Number(precio),
+                duracion_dias: Number(dias)
+            });
+        }
 
         if (success) {
-            setNombre(''); setPrecio(''); setDias('');
-            setShowForm(false);
+            handleCancel();
             loadPlans();
         } else {
-            alert('Error al guardar el pan');
+            alert('Error al guardar el plan');
             setLoading(false);
         }
     };
@@ -49,11 +75,22 @@ export default function Plans() {
         if (success) loadPlans();
     };
 
+    const handleDelete = async (plan: Plan) => {
+        if (confirm(`¿Estás seguro de ELIMINAR el plan "${plan.nombre}"? Esto podría fallar si hay suscripciones activas usándolo.`)) {
+            const { success, error } = await deletePlan(plan.id);
+            if (success) {
+                loadPlans();
+            } else {
+                alert('No se puede eliminar: ' + (error?.details || 'Probablemente tiene suscripciones asociadas. Desactívalo en su lugar.'));
+            }
+        }
+    };
+
     return (
         <div className="page-container">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--spacing-lg)' }}>
                 <h2>Gestión de Planes y Membresías</h2>
-                <button onClick={() => setShowForm(!showForm)} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button onClick={() => { if (showForm) handleCancel(); else setShowForm(true); }} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     {showForm ? <X size={18} /> : <Plus size={18} />}
                     {showForm ? 'Cancelar' : 'Nuevo Plan'}
                 </button>
@@ -64,7 +101,7 @@ export default function Plans() {
                     backgroundColor: 'var(--color-card)', padding: 'var(--spacing-lg)', borderRadius: 'var(--radius-lg)',
                     marginBottom: 'var(--spacing-lg)', border: '1px solid var(--color-accent)'
                 }}>
-                    <h3 style={{ marginBottom: 'var(--spacing-md)' }}>Crear Nuevo Plan</h3>
+                    <h3 style={{ marginBottom: 'var(--spacing-md)' }}>{editingId ? 'Editar Plan' : 'Crear Nuevo Plan'}</h3>
                     <form onSubmit={handleSave} style={{ display: 'grid', gap: 'var(--spacing-md)', gridTemplateColumns: '1fr 1fr 1fr auto' }}>
                         <div>
                             <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px' }}>Nombre</label>
@@ -91,7 +128,9 @@ export default function Plans() {
                             />
                         </div>
                         <div style={{ display: 'flex', alignItems: 'end' }}>
-                            <button type="submit" disabled={loading} style={{ height: '38px' }}>Guardar</button>
+                            <button type="submit" disabled={loading} style={{ height: '38px' }}>
+                                {editingId ? 'Actualizar' : 'Guardar'}
+                            </button>
                         </div>
                     </form>
                 </div>
@@ -132,17 +171,43 @@ export default function Plans() {
                                 </div>
                             </div>
 
-                            <button
-                                onClick={() => handleToggle(plan)}
-                                style={{
-                                    width: '100%',
-                                    backgroundColor: plan.activo ? 'rgba(255, 77, 77, 0.1)' : 'rgba(0, 204, 102, 0.1)',
-                                    color: plan.activo ? 'var(--color-danger)' : 'var(--color-success)',
-                                    border: 'none'
-                                }}
-                            >
-                                {plan.activo ? 'Desactivar Plan' : 'Reactivar Plan'}
-                            </button>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                                {/* Edit Button */}
+                                <button
+                                    onClick={() => handleEdit(plan)}
+                                    style={{
+                                        backgroundColor: 'var(--color-bg)', color: 'white',
+                                        border: '1px solid var(--color-border)', padding: '6px', fontSize: '13px'
+                                    }}
+                                >
+                                    Editar
+                                </button>
+
+                                {/* Toggle (Enable/Disable) */}
+                                <button
+                                    onClick={() => handleToggle(plan)}
+                                    style={{
+                                        backgroundColor: plan.activo ? 'rgba(255, 77, 77, 0.1)' : 'rgba(0, 204, 102, 0.1)',
+                                        color: plan.activo ? 'var(--color-danger)' : 'var(--color-success)',
+                                        border: 'none', padding: '6px', fontSize: '13px'
+                                    }}
+                                >
+                                    {plan.activo ? 'Desactivar' : 'Activar'}
+                                </button>
+                            </div>
+
+                            {/* Hard Delete Button (Small) */}
+                            <div style={{ marginTop: '10px', textAlign: 'right' }}>
+                                <button
+                                    onClick={() => handleDelete(plan)}
+                                    style={{
+                                        background: 'transparent', border: 'none', color: '#666',
+                                        fontSize: '11px', textDecoration: 'underline', cursor: 'pointer'
+                                    }}
+                                >
+                                    Eliminar permanentemente
+                                </button>
+                            </div>
                         </div>
                     ))}
                 </div>

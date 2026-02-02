@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../logic/authContext';
 import { LogIn } from 'lucide-react';
@@ -13,6 +13,17 @@ export default function Login() {
     const [password, setPassword] = useState('');
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
+    const preloadStarted = useRef(false);
+
+    // Preload Dashboard when user starts typing (anticipating login)
+    useEffect(() => {
+        if ((email || password) && !preloadStarted.current) {
+            preloadStarted.current = true;
+            // Preload heavy chunks in background
+            import('./Dashboard');
+            import('./Members');
+        }
+    }, [email, password]);
 
     // Warn if env vars are missing
     if (!isConfigured) {
@@ -39,12 +50,20 @@ export default function Login() {
             if (err) {
                 setError(err);
             } else {
-                console.log('Login: Success, navigating...');
+                console.log('Login: Success, preloading Dashboard...');
+                // Preload Dashboard chunk in background for instant load
+                // Using requestIdleCallback to not block navigation
+                const preloadDashboard = () => import('./Dashboard');
+                if ('requestIdleCallback' in window) {
+                    requestIdleCallback(() => preloadDashboard());
+                } else {
+                    setTimeout(preloadDashboard, 100); // Fallback for Safari
+                }
                 navigate('/');
             }
-        } catch (e: any) {
+        } catch (e: unknown) {
             console.error('Login: Exception detected', e);
-            setError('Error inesperado: ' + e.message);
+            setError('Error inesperado: ' + (e instanceof Error ? e.message : String(e)));
         } finally {
             console.log('Login: Setting loading false');
             setLoading(false);
@@ -158,8 +177,8 @@ export default function Login() {
                                 const time = Date.now() - start;
                                 if (error) alert('❌ Error Conexión: ' + error.message);
                                 else alert(`✅ Conexión Exitosa (${time}ms)`);
-                            } catch (e: any) {
-                                alert('❌ Excepción: ' + e.message);
+                            } catch (e: unknown) {
+                                alert('❌ Excepción: ' + (e instanceof Error ? e.message : String(e)));
                             }
                         }}
                         style={{
@@ -189,8 +208,8 @@ export default function Login() {
                                 const time = Date.now() - start;
                                 if (res.ok || res.status === 200 || res.status === 404) alert(`✅ Internet OK (${res.status} - ${time}ms)`);
                                 else alert(`⚠️ Internet Raro: Status ${res.status}`);
-                            } catch (e: any) {
-                                alert('❌ ERROR RED: ' + e.message);
+                            } catch (e: unknown) {
+                                alert('❌ ERROR RED: ' + (e instanceof Error ? e.message : String(e)));
                             }
                         }}
                         style={{

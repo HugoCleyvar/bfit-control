@@ -19,5 +19,17 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+    rules: {
+      // Allow data fetching pattern with useCallback + useEffect (common React pattern)
+      'react-hooks/set-state-in-effect': 'off',
+      // Allow unused vars with underscore prefix (destructuring pattern)
+      '@typescript-eslint/no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_'
+      }],
+      // Allow exporting hooks from context files
+      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
+    },
   },
 ])

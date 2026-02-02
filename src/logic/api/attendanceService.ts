@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
-import type { Attendance, UUID } from '../../domain/types';
-import { getMembers } from './memberService';
+import type { Attendance } from '../../domain/types';
+import { findMemberForCheckIn } from './memberService';
 
 export interface CheckInResult {
     success: boolean;
@@ -10,6 +10,9 @@ export interface CheckInResult {
 
 export async function getTodayAttendance(): Promise<Attendance[]> {
     // For MVP, just get last 50 check-ins. Real app would filter by date(now())
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+
+    // Using date filter for accuracy as per audit
     const { data, error } = await supabase
         .from('attendance')
         .select(`
@@ -20,30 +23,31 @@ export async function getTodayAttendance(): Promise<Attendance[]> {
                 foto_url
             )
         `)
-        .order('fecha_hora', { ascending: false })
-        .limit(50);
+        .gte('fecha_hora', `${today}T00:00:00`)
+        .order('fecha_hora', { ascending: false });
 
     if (error) {
         console.error('Error fetching attendance:', error);
         return [];
     }
 
-    return data.map((d: any) => ({
+    interface AttendanceRow {
+        id: string;
+        fecha_hora: string;
+        permitido: boolean;
+        usuario_id: string;
+        usuario: { nombre: string; apellido: string; foto_url?: string } | null;
+    }
+
+    return (data as AttendanceRow[]).map((d) => ({
         ...d,
-        usuario: d.usuario // flatten logic if needed, but Supabase returns object which matches interface
-    }));
+        usuario: d.usuario || undefined
+    })) as Attendance[];
 }
 
-export async function registerCheckIn(memberIdOrName: string): Promise<CheckInResult> {
-    // 1. Find Member (Reuse getMembers to get status logic for free, 
-    // although inefficient for single lookup, it ensures consistent business logic)
-    const allMembers = await getMembers();
-
-    // Search
-    const member = allMembers.find(m =>
-        m.id === memberIdOrName ||
-        (m.nombre + ' ' + m.apellido).toLowerCase().includes(memberIdOrName.toLowerCase())
-    );
+export async function registerCheckIn(memberIdOrName: string, colaboradorId?: string, turnoId?: string): Promise<CheckInResult> {
+    // 1. Find Member Directly in DB (Audit Fix)
+    const member = await findMemberForCheckIn(memberIdOrName);
 
     if (!member) {
         return { success: false, message: 'Usuario no encontrado' };
@@ -58,7 +62,9 @@ export async function registerCheckIn(memberIdOrName: string): Promise<CheckInRe
         .insert({
             usuario_id: member.id,
             permitido: canAccess,
-            fecha_hora: new Date().toISOString()
+            fecha_hora: new Date().toISOString(),
+            colaborador_id: colaboradorId,
+            turno_id: turnoId
         });
 
     if (error) {
@@ -84,4 +90,38 @@ export async function registerCheckIn(memberIdOrName: string): Promise<CheckInRe
             member: { nombre: member.nombre, foto_url: member.foto_url }
         };
     }
+}
+// Chart Data: Peak Hours (Heatmap logic: Group by Hour 0-23)
+export async function getAttendanceHeatmap(): Promise<{ hour: number; count: number }[]> {
+    // Analyze last 30 days to get a good average pattern
+    const today = new Date();
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(today.getDate() - 30);
+    const dateStr = thirtyDaysAgo.toISOString().split('T')[0];
+
+    const { data, error } = await supabase
+        .from('attendance')
+        .select('fecha_hora')
+        .gte('fecha_hora', `${dateStr}T00:00:00`);
+
+    if (error) {
+        console.error('Error fetching heatmap:', error);
+        return [];
+    }
+
+    // Initialize hours 6am to 23pm (gym hours?) or just 0-23
+    const hoursMap: Record<number, number> = {};
+    for (let i = 6; i <= 22; i++) hoursMap[i] = 0; // Focus on 6 AM to 10 PM
+
+    data.forEach((a: { fecha_hora: string }) => {
+        const h = new Date(a.fecha_hora).getHours();
+        if (hoursMap[h] !== undefined) {
+            hoursMap[h]++;
+        }
+    });
+
+    return Object.entries(hoursMap).map(([h, count]) => ({
+        hour: Number(h),
+        count
+    })).sort((a, b) => a.hour - b.hour);
 }

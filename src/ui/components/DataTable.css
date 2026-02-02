@@ -68,3 +68,41 @@
     color: var(--color-danger);
     background-color: rgba(255, 77, 77, 0.1);
 }
+
+/* Mobile responsive styles */
+@media (max-width: 768px) {
+    .table-container {
+        border-radius: var(--radius-md);
+        margin: 0 calc(-1 * var(--spacing-md));
+        width: calc(100% + var(--spacing-md) * 2);
+    }
+
+    .data-table th,
+    .data-table td {
+        padding: var(--spacing-sm) var(--spacing-md);
+        font-size: 0.8rem;
+    }
+
+    .data-table th {
+        font-size: 0.65rem;
+    }
+
+    .actions-cell {
+        flex-direction: column;
+        gap: var(--spacing-xs);
+    }
+
+    .action-btn {
+        min-height: 36px;
+        min-width: 36px;
+    }
+}
+
+@media (max-width: 480px) {
+
+    .data-table th,
+    .data-table td {
+        padding: var(--spacing-xs) var(--spacing-sm);
+        font-size: 0.75rem;
+    }
+}

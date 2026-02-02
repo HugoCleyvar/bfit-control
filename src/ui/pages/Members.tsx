@@ -1,12 +1,54 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { getMembers, deleteMember, createMember, updateMember, updateSubscriptionExpiration } from '../../logic/api/memberService';
 import { supabase } from '../../logic/api/supabase';
+import { useAuth } from '../../logic/authContext';
 import type { MemberWithStatus } from '../../logic/api/memberService';
 import { DataTable } from '../components/DataTable';
 import type { Column } from '../components/DataTable';
-import { Edit, UserPlus, Trash2, X, Phone, Calendar, CreditCard, Activity } from 'lucide-react';
+import { Edit, UserPlus, Trash2, X, Phone, Calendar } from 'lucide-react';
 import { MemberSearch } from '../components/MemberSearch';
 import { MemberForm } from '../components/MemberForm';
+import { getMemberStats } from '../../logic/api/gamificationService';
+import { MessageCircle, Trophy, Flame } from 'lucide-react';
+
+interface MemberFormData {
+    nombre: string;
+    apellido: string;
+    telefono: string;
+    fecha_nacimiento?: string;
+    foto_url: string;
+    fecha_vencimiento?: string;
+}
+
+function Scorecard({ userId }: { userId: string }) {
+    const [stats, setStats] = useState({ totalVisits: 0, thisMonth: 0, streak: 0 });
+
+    useEffect(() => {
+        getMemberStats(userId).then(setStats);
+    }, [userId]);
+
+    return (
+        <>
+            <div style={{
+                padding: '8px 14px', borderRadius: '8px',
+                backgroundColor: 'rgba(255,165,0, 0.1)', color: 'orange',
+                display: 'flex', alignItems: 'center', gap: '8px', border: '1px solid rgba(255,165,0, 0.3)'
+            }}>
+                <Flame size={18} />
+                <span>Racha: <b>{stats.streak}</b> sem</span>
+            </div>
+
+            <div style={{
+                padding: '8px 14px', borderRadius: '8px',
+                backgroundColor: 'rgba(50, 205, 50, 0.1)', color: 'var(--color-success)',
+                display: 'flex', alignItems: 'center', gap: '8px', border: '1px solid rgba(50, 205, 50, 0.3)'
+            }}>
+                <Trophy size={18} />
+                <span>Nivel: <b>{stats.totalVisits > 50 ? 'Elite' : stats.totalVisits > 20 ? 'Pro' : 'Novato'}</b> ({stats.totalVisits} visitas)</span>
+            </div>
+        </>
+    );
+}
 
 export default function Members() {
     const [members, setMembers] = useState<MemberWithStatus[]>([]);
@@ -20,16 +62,16 @@ export default function Members() {
     const selectedMember = members.find(m => m.id === selectedMemberId);
     const displayedMembers = selectedMember ? [selectedMember] : members;
 
-    useEffect(() => {
-        loadMembers();
-    }, []);
-
-    const loadMembers = async () => {
+    const loadMembers = useCallback(async () => {
         setLoading(true);
         const data = await getMembers();
         setMembers(data);
         setLoading(false);
-    };
+    }, []);
+
+    useEffect(() => {
+        loadMembers();
+    }, [loadMembers]);
 
     const columns: Column<MemberWithStatus>[] = [
         {
@@ -129,13 +171,15 @@ export default function Members() {
         }
     };
 
-    const handleCreate = async (data: any) => {
+    const { user } = useAuth(); // for collaborator_id
+
+    const handleCreate = async (data: MemberFormData) => {
         const { fecha_vencimiento, ...memberData } = data;
 
         // Clean empty dates to avoid Supabase errors (Postgres date invalid input syntax)
-        if (memberData.fecha_nacimiento === '') memberData.fecha_nacimiento = null;
+        if (memberData.fecha_nacimiento === '') memberData.fecha_nacimiento = undefined;
 
-        const result = await createMember(memberData);
+        const result = await createMember(memberData, user?.id);
         if (result) {
             // If expiration date provided for new member, set it
             if (fecha_vencimiento) {
@@ -150,14 +194,14 @@ export default function Members() {
     };
 
 
-    const handleUpdate = async (data: any) => {
+    const handleUpdate = async (data: MemberFormData) => {
         if (!editingMember) return false;
 
         // 1. Update Profile
-        const { fecha_vencimiento, ...memberData } = data;
+        const { fecha_vencimiento: _fecha_vencimiento, ...memberData } = data;
 
         // Clean empty dates
-        if (memberData.fecha_nacimiento === '') memberData.fecha_nacimiento = null;
+        if (memberData.fecha_nacimiento === '') memberData.fecha_nacimiento = undefined;
 
         const memberResult = await updateMember(editingMember.id, memberData);
 
@@ -204,9 +248,14 @@ export default function Members() {
                 <h2>Gestión de Usuarios</h2>
                 <div style={{ width: '300px' }}>
                     <MemberSearch
-                        members={members}
                         placeholder="Buscar miembro..."
-                        onSelect={setSelectedMemberId}
+                        onSelect={(id, member) => {
+                            setSelectedMemberId(id);
+                            // If member is not in current list (pagination), add it temporarily so it can be displayed
+                            if (member && !members.find(m => m.id === id)) {
+                                setMembers(prev => [member, ...prev]);
+                            }
+                        }}
                     />
                 </div>
                 <button
@@ -248,7 +297,23 @@ export default function Members() {
                         </div>
 
                         <div style={{ flex: 1 }}>
-                            <h2 style={{ margin: 0, marginBottom: '8px' }}>{selectedMember.nombre} {selectedMember.apellido}</h2>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <h2 style={{ margin: 0, marginBottom: '8px' }}>{selectedMember.nombre} {selectedMember.apellido}</h2>
+                                {selectedMember.telefono && (
+                                    <a
+                                        href={`https://wa.me/${selectedMember.telefono.replace(/\D/g, '')}?text=Hola ${selectedMember.nombre}, te contactamos de BFIT Gym...`}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        style={{
+                                            backgroundColor: '#25D366', color: 'white', padding: '8px 16px', borderRadius: '20px',
+                                            textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '14px', fontWeight: 'bold'
+                                        }}
+                                    >
+                                        <MessageCircle size={16} /> WhatsApp
+                                    </a>
+                                )}
+                            </div>
+
                             <div style={{ display: 'flex', gap: '20px', color: 'var(--color-text-secondary)', fontSize: '14px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                     <Phone size={16} /> {selectedMember.telefono || 'Sin teléfono'}
@@ -258,23 +323,9 @@ export default function Members() {
                                 </div>
                             </div>
 
-                            <div style={{ marginTop: '16px', display: 'flex', gap: '10px' }}>
-                                <div style={{
-                                    padding: '6px 12px', borderRadius: '8px',
-                                    backgroundColor: 'rgba(255,255,255,0.05)',
-                                    display: 'flex', alignItems: 'center', gap: '8px'
-                                }}>
-                                    <Activity size={16} color={selectedMember.estatus === 'activo' ? 'var(--color-success)' : 'gray'} />
-                                    <span>Estatus: {selectedMember.estatus}</span>
-                                </div>
-                                <div style={{
-                                    padding: '6px 12px', borderRadius: '8px',
-                                    backgroundColor: 'rgba(255,255,255,0.05)',
-                                    display: 'flex', alignItems: 'center', gap: '8px'
-                                }}>
-                                    <CreditCard size={16} />
-                                    <span>Plan: {selectedMember.subscriptionStatus.replace('_', ' ')}</span>
-                                </div>
+                            {/* Member Scorecard */}
+                            <div style={{ marginTop: '16px', display: 'flex', gap: '15px' }}>
+                                <Scorecard userId={selectedMember.id} />
                             </div>
                         </div>
                     </div>

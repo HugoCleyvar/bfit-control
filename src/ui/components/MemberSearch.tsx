@@ -1,31 +1,49 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, User, X } from 'lucide-react';
+import { Search, User, X, Loader } from 'lucide-react';
 import type { MemberWithStatus } from '../../logic/api/memberService';
+import { searchMembers } from '../../logic/api/memberService';
 
 interface MemberSearchProps {
-    members: MemberWithStatus[];
-    onSelect: (memberId: string) => void;
+    onSelect: (memberId: string, member?: MemberWithStatus) => void;
     placeholder?: string;
 }
 
-export function MemberSearch({ members, onSelect, placeholder = "Buscar miembro..." }: MemberSearchProps) {
+export function MemberSearch({ onSelect, placeholder = "Buscar miembro..." }: MemberSearchProps) {
     const [query, setQuery] = useState('');
     const [isOpen, setIsOpen] = useState(false);
     const [selectedMember, setSelectedMember] = useState<MemberWithStatus | null>(null);
+    const [results, setResults] = useState<MemberWithStatus[]>([]);
+    const [loading, setLoading] = useState(false);
+
+    // Debounce ref
+    const timeoutRef = useRef<number | null>(null);
     const wrapperRef = useRef<HTMLDivElement>(null);
 
-    // Initial filter logic
-    const filtered = members.filter(m => {
-        if (!query) return false;
-        const fullName = `${m.nombre || ''} ${m.apellido || ''}`.toLowerCase();
-        return fullName.includes(query.toLowerCase());
-    }).slice(0, 5); // Limit to 5 results for UI cleanliness
+    const handleSearch = (text: string) => {
+        setQuery(text);
+        setIsOpen(true);
+
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+
+        if (!text) {
+            setResults([]);
+            return;
+        }
+
+        setLoading(true);
+        timeoutRef.current = window.setTimeout(async () => {
+            const data = await searchMembers(text);
+            setResults(data);
+            setLoading(false);
+        }, 500); // 500ms debounce
+    };
 
     const handleSelect = (member: MemberWithStatus) => {
         setSelectedMember(member);
-        setQuery(''); // Clear query or keep name? Usually replacing with 'chip' is better.
+        setQuery('');
         setIsOpen(false);
-        onSelect(member.id);
+        setResults([]);
+        onSelect(member.id, member);
     };
 
     const clearSelection = () => {
@@ -82,10 +100,7 @@ export function MemberSearch({ members, onSelect, placeholder = "Buscar miembro.
                 <input
                     type="text"
                     value={query}
-                    onChange={(e) => {
-                        setQuery(e.target.value);
-                        setIsOpen(true);
-                    }}
+                    onChange={(e) => handleSearch(e.target.value)}
                     onFocus={() => setIsOpen(true)}
                     placeholder={placeholder}
                     style={{
@@ -98,6 +113,11 @@ export function MemberSearch({ members, onSelect, placeholder = "Buscar miembro.
                         fontSize: 'var(--font-size-md)'
                     }}
                 />
+                {loading && (
+                    <div style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)' }}>
+                        <Loader size={16} className="animate-spin" />
+                    </div>
+                )}
             </div>
 
             {isOpen && query.length > 0 && (
@@ -113,10 +133,10 @@ export function MemberSearch({ members, onSelect, placeholder = "Buscar miembro.
                     overflowY: 'auto',
                     boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
                 }}>
-                    {filtered.length === 0 ? (
+                    {!loading && results.length === 0 ? (
                         <div style={{ padding: '10px', color: 'gray', textAlign: 'center' }}>No encontrado</div>
                     ) : (
-                        filtered.map(member => (
+                        results.map(member => (
                             <div
                                 key={member.id}
                                 onClick={() => handleSelect(member)}

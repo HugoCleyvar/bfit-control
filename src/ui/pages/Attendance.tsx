@@ -1,37 +1,46 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { registerCheckIn, getTodayAttendance } from '../../logic/api/attendanceService';
 import type { CheckInResult } from '../../logic/api/attendanceService';
 import type { Attendance } from '../../domain/types';
+import { useAuth } from '../../logic/authContext';
+import { useShift } from '../../logic/shiftContext';
 import { DataTable } from '../components/DataTable';
 import type { Column } from '../components/DataTable';
-import { getMembers, type MemberWithStatus } from '../../logic/api/memberService';
+// Removed unused getMembers import
 import { MemberSearch } from '../components/MemberSearch';
-import { Search, UserCheck, XCircle, CheckCircle } from 'lucide-react';
+import { Search, XCircle, CheckCircle } from 'lucide-react';
 
 export default function AttendancePage() {
     const [query, setQuery] = useState('');
     const [checkInResult, setCheckInResult] = useState<CheckInResult | null>(null);
     const [attendanceList, setAttendanceList] = useState<Attendance[]>([]);
-    const [members, setMembers] = useState<MemberWithStatus[]>([]);
     const [loading, setLoading] = useState(false);
+
+    const loadData = useCallback(async () => {
+        // Load in parallel
+        const [attList] = await Promise.all([
+            getTodayAttendance()
+        ]);
+        setAttendanceList(attList);
+    }, []);
 
     useEffect(() => {
         loadData();
-    }, []);
+    }, [loadData]);
 
-    const loadData = async () => {
-        // Load in parallel
-        const [attList, memList] = await Promise.all([
-            getTodayAttendance(),
-            getMembers()
-        ]);
-        setAttendanceList(attList);
-        setMembers(memList);
-    };
+    const { user, isAdmin } = useAuth();
+    const { currentShift } = useShift();
 
     // Manual ID checkin (legacy input or fallback)
     const handleCheckIn = async (e?: React.FormEvent, directId?: string) => {
         if (e) e.preventDefault();
+
+        // Security Check
+        if (!isAdmin && !currentShift) {
+            alert('Debes abrir un turno para registrar asistencias.');
+            return;
+        }
+
         const searchTerm = directId || query;
 
         if (!searchTerm.trim()) return;
@@ -39,7 +48,12 @@ export default function AttendancePage() {
         setLoading(true);
         setCheckInResult(null);
 
-        const result = await registerCheckIn(searchTerm);
+        const result = await registerCheckIn(
+            searchTerm,
+            user?.id,
+            currentShift?.id
+        );
+
         setCheckInResult(result);
         setLoading(false);
         setQuery(''); // Clear manual input
@@ -76,7 +90,6 @@ export default function AttendancePage() {
                     <div style={{ marginBottom: 'var(--spacing-md)' }}>
                         <label style={{ display: 'block', marginBottom: '8px', fontSize: 'var(--font-size-sm)' }}>Buscar por Nombre</label>
                         <MemberSearch
-                            members={members}
                             placeholder="Escribe el nombre del miembro..."
                             onSelect={(id) => handleCheckIn(undefined, id)}
                         />

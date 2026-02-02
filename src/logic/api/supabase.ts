@@ -20,9 +20,9 @@ export const supabase = createClient(
     supabaseKey || 'placeholder',
     {
         auth: {
-            persistSession: false, // TEMPORARY DEBUG: Disable persistence
+            persistSession: true,
             autoRefreshToken: true,
-            detectSessionInUrl: false
+            detectSessionInUrl: true
         }
     }
 );

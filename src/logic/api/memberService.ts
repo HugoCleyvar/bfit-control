@@ -6,8 +6,8 @@ export interface MemberWithStatus extends Member {
     daysRemaining: number;
 }
 
-export async function getMembers(): Promise<MemberWithStatus[]> {
-    // Fetch members with their subscriptions
+export async function getMembers(limit = 50): Promise<MemberWithStatus[]> {
+    // Fetch recent members with their subscriptions
     const { data, error } = await supabase
         .from('members')
         .select(`
@@ -15,16 +15,102 @@ export async function getMembers(): Promise<MemberWithStatus[]> {
             subscriptions (
                 *
             )
-        `);
+        `)
+        .order('fecha_registro', { ascending: false })
+        .limit(limit);
 
     if (error) {
         console.error('Error fetching members:', error);
         return [];
     }
 
+    return mapMembersWithStatus(data);
+}
+
+export async function getMembersCount(): Promise<number> {
+    const { count, error } = await supabase
+        .from('members')
+        .select('*', { count: 'exact', head: true });
+
+    if (error) {
+        console.error('Error counting members:', error);
+        return 0;
+    }
+    return count || 0;
+}
+
+export async function getActiveMemberCount(): Promise<number> {
+    const today = new Date().toISOString();
+    // Count distinct users with active valid subscription
+    // Since Supabase doesn't support easy 'distinct' in count without raw sql or RPC,
+    // we will count active subscriptions. It's a close enough proxy.
+    const { count, error } = await supabase
+        .from('subscriptions')
+        .select('*', { count: 'exact', head: true })
+        .eq('estatus', 'activa')
+        .gt('fecha_vencimiento', today);
+
+    if (error) return 0;
+    return count || 0;
+}
+
+export async function searchMembers(query: string): Promise<MemberWithStatus[]> {
+    if (!query) return [];
+
+    // Search by name or last name
+    const { data, error } = await supabase
+        .from('members')
+        .select(`
+            *,
+            subscriptions (*)
+        `)
+        .or(`nombre.ilike.%${query}%,apellido.ilike.%${query}%`)
+        .limit(10);
+
+    if (error) {
+        console.error('Error searching members:', error);
+        return [];
+    }
+
+    return mapMembersWithStatus(data);
+}
+
+export async function findMemberForCheckIn(query: string): Promise<MemberWithStatus | null> {
+    // 1. Try by ID (exact match)
+    const { data: byId } = await supabase
+        .from('members')
+        .select(`*, subscriptions (*)`)
+        .eq('id', query)
+        .maybeSingle();
+
+    if (byId) {
+        return mapMembersWithStatus([byId])[0];
+    }
+
+    // 2. Try by Name (Partial match)
+    // We limit to 1 for check-in safety. If multiple match, we might need UI handling, 
+    // but for now we take the first strict match.
+    const { data: byName } = await supabase
+        .from('members')
+        .select(`*, subscriptions (*)`)
+        .or(`nombre.ilike.%${query}%,apellido.ilike.%${query}%`)
+        .limit(1);
+
+    if (byName && byName.length > 0) {
+        return mapMembersWithStatus(byName)[0];
+    }
+
+    return null;
+}
+
+interface MemberWithSubscriptions extends Member {
+    subscriptions: Subscription[];
+}
+
+function mapMembersWithStatus(data: MemberWithSubscriptions[]): MemberWithStatus[] {
     const today = new Date();
 
-    return data.map((member: any) => {
+    return data.map((member) => {
         // Find the relevant subscription (active or latest)
         // We prioritize 'activa', then check for 'vencida' if no active found.
         const subs = member.subscriptions as Subscription[];
@@ -37,10 +123,16 @@ export async function getMembers(): Promise<MemberWithStatus[]> {
         let daysResult = 0;
 
         if (targetSub) {
-            status = targetSub.estatus;
             const dueDate = new Date(targetSub.fecha_vencimiento);
             const diffTime = dueDate.getTime() - today.getTime();
             daysResult = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+            // CRITICAL: Overwrite DB status if date is past
+            if (daysResult < 0) {
+                status = 'vencida';
+            } else {
+                status = targetSub.estatus;
+            }
         }
 
         return {
@@ -67,12 +159,13 @@ export async function deleteMember(id: string): Promise<boolean> {
     return true;
 }
 
-export async function createMember(member: Omit<Member, 'id' | 'estatus' | 'fecha_registro'>): Promise<Member | null> {
+export async function createMember(member: Omit<Member, 'id' | 'estatus' | 'fecha_registro'>, colaboradorId?: string): Promise<Member | null> {
     const { data, error } = await supabase
         .from('members')
         .insert({
             ...member,
-            estatus: 'activo'
+            estatus: 'activo',
+            colaborador_id: colaboradorId
         })
         .select()
         .single();
@@ -99,7 +192,7 @@ export async function updateMember(id: string, updates: Partial<Member>): Promis
     return data;
 }
 
-export async function updateSubscriptionExpiration(memberId: string, newDate: string): Promise<boolean> {
+export async function updateSubscriptionExpiration(memberId: string, newDate: string, planId?: string): Promise<boolean> {
     // 1. Find active or latest sub
     const { data: subs } = await supabase
         .from('subscriptions')
@@ -112,18 +205,30 @@ export async function updateSubscriptionExpiration(memberId: string, newDate: st
 
     if (!targetSub) {
         // If no sub exists, we need to create one.
-        // We need a valid plan_id for the FK constraint.
-        const { data: plans } = await supabase.from('plans').select('id').limit(1);
-        const defaultPlanId = plans?.[0]?.id;
+        // Audit Fix: Require valid planId or fail, don't pick random.
 
-        if (!defaultPlanId) {
-            console.error('Cannot create subscription without a valid plan.');
+        let targetPlanId = planId;
+
+        // If no planId provided, try to find a "Standard" or "Mensual" plan as fallback,
+        // but getting ANY plan is dangerous.
+        if (!targetPlanId) {
+            const { data: plans } = await supabase
+                .from('plans')
+                .select('id')
+                .eq('activo', true)
+                .order('precio', { ascending: true }) // Assume cheapest is default? Or safer to fail.
+                .limit(1);
+            targetPlanId = plans?.[0]?.id;
+        }
+
+        if (!targetPlanId) {
+            console.error('Cannot create subscription without a framework plan.');
             return false;
         }
 
         const { error } = await supabase.from('subscriptions').insert({
             usuario_id: memberId,
-            plan_id: defaultPlanId,
+            plan_id: targetPlanId,
             fecha_inicio: new Date().toISOString(),
             fecha_vencimiento: newDate,
             estatus: 'activa'
