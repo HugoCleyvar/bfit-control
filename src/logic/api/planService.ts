@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import type { UUID } from '../../domain/types';
+import type { PostgrestError } from '@supabase/supabase-js';
 
 export interface Plan {
     id: UUID;
@@ -52,4 +53,17 @@ export async function updatePlan(id: string, updates: Partial<Plan>): Promise<bo
 
 export async function togglePlanStatus(id: string, currentStatus: boolean): Promise<boolean> {
     return updatePlan(id, { activo: !currentStatus });
+}
+
+export async function deletePlan(id: string): Promise<{ success: boolean; error?: PostgrestError }> {
+    const { error } = await supabase
+        .from('plans')
+        .delete()
+        .eq('id', id);
+
+    if (error) {
+        console.error('Error deleting plan:', error);
+        return { success: false, error };
+    }
+    return { success: true };
 }

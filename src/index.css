@@ -121,3 +121,14 @@ button:focus-visible {
 .text-success {
   color: var(--color-success) !important;
 }
+
+/* Spinner animation for lazy loading */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}

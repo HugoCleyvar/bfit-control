@@ -1,37 +1,37 @@
-import { useState, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import type { Member } from '../../domain/types';
 import { X, Save, User, Phone, Calendar, Image as ImageIcon } from 'lucide-react';
 
+interface MemberFormData {
+    nombre: string;
+    apellido: string;
+    telefono: string;
+    fecha_nacimiento: string;
+    foto_url: string;
+    fecha_vencimiento: string;
+}
+
 interface MemberFormProps {
     initialData?: Partial<Member> & { fecha_vencimiento?: string };
-    onSubmit: (data: any) => Promise<boolean>;
+    onSubmit: (data: MemberFormData) => Promise<boolean>;
     onCancel: () => void;
     title: string;
 }
 
 export function MemberForm({ initialData, onSubmit, onCancel, title }: MemberFormProps) {
     const [loading, setLoading] = useState(false);
-    const [formData, setFormData] = useState({
-        nombre: '',
-        apellido: '',
-        telefono: '',
-        fecha_nacimiento: '',
-        foto_url: '',
-        fecha_vencimiento: ''
-    });
 
-    useEffect(() => {
-        if (initialData) {
-            setFormData({
-                nombre: initialData.nombre || '',
-                apellido: initialData.apellido || '',
-                telefono: initialData.telefono || '',
-                fecha_nacimiento: initialData.fecha_nacimiento ? new Date(initialData.fecha_nacimiento).toISOString().split('T')[0] : '',
-                foto_url: initialData.foto_url || '',
-                fecha_vencimiento: initialData.fecha_vencimiento ? new Date(initialData.fecha_vencimiento).toISOString().split('T')[0] : ''
-            });
-        }
-    }, [initialData]);
+    // Memoizado para evitar recálculos innecesarios
+    const initialFormData = useMemo((): MemberFormData => ({
+        nombre: initialData?.nombre || '',
+        apellido: initialData?.apellido || '',
+        telefono: initialData?.telefono || '',
+        fecha_nacimiento: initialData?.fecha_nacimiento ? new Date(initialData.fecha_nacimiento).toISOString().split('T')[0] : '',
+        foto_url: initialData?.foto_url || '',
+        fecha_vencimiento: initialData?.fecha_vencimiento ? new Date(initialData.fecha_vencimiento).toISOString().split('T')[0] : ''
+    }), [initialData]);
+
+    const [formData, setFormData] = useState<MemberFormData>(initialFormData);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();

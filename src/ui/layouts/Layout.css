@@ -210,3 +210,126 @@
     overflow-y: auto;
     position: relative;
 }
+
+/* ============================================
+   MOBILE RESPONSIVE STYLES
+   ============================================ */
+
+/* Mobile Menu Toggle Button */
+.mobile-menu-toggle {
+    display: none;
+    background: none;
+    border: none;
+    color: var(--color-text-primary);
+    padding: 8px;
+    cursor: pointer;
+}
+
+/* Sidebar Overlay for Mobile */
+.sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 998;
+}
+
+/* Tablet: < 1024px */
+@media (max-width: 1024px) {
+    .sidebar {
+        width: 200px;
+    }
+
+    .search-bar {
+        width: 200px;
+    }
+
+    .user-info {
+        display: none;
+    }
+
+    .page-content {
+        padding: var(--spacing-lg);
+    }
+}
+
+/* Mobile: < 768px */
+@media (max-width: 768px) {
+    .main-layout {
+        flex-direction: column;
+    }
+
+    .sidebar {
+        position: fixed;
+        left: -280px;
+        top: 0;
+        bottom: 0;
+        width: 280px;
+        z-index: 999;
+        transition: left 0.3s ease;
+        box-shadow: 4px 0 20px rgba(0, 0, 0, 0.3);
+    }
+
+    .sidebar.open {
+        left: 0;
+    }
+
+    .sidebar-overlay.visible {
+        display: block;
+    }
+
+    .mobile-menu-toggle {
+        display: flex;
+    }
+
+    .topbar {
+        height: 60px;
+        padding: 0 var(--spacing-md);
+    }
+
+    .search-bar {
+        display: none;
+    }
+
+    .content-wrapper {
+        width: 100%;
+    }
+
+    .page-content {
+        padding: var(--spacing-md);
+    }
+
+    /* Better touch targets */
+    .nav-item {
+        padding: var(--spacing-md) var(--spacing-lg);
+        min-height: 48px;
+    }
+
+    .logout-btn {
+        min-height: 48px;
+    }
+}
+
+/* Small Mobile: < 480px */
+@media (max-width: 480px) {
+    .topbar {
+        padding: 0 var(--spacing-sm);
+    }
+
+    .topbar-actions {
+        gap: var(--spacing-sm);
+    }
+
+    .avatar {
+        width: 36px;
+        height: 36px;
+    }
+
+    .page-content {
+        padding: var(--spacing-sm);
+    }
+
+    .brand-logo {
+        font-size: 1.25rem;
+    }
+}

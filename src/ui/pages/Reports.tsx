@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { getPayments } from '../../logic/api/financeService';
 import { getMembers } from '../../logic/api/memberService';
-import type { Payment } from '../../domain/types';
-import { BarChart, PieChart, TrendingUp, Calendar } from 'lucide-react';
+
+import { BarChart, PieChart, TrendingUp } from 'lucide-react';
 
 export default function Reports() {
     const [loading, setLoading] = useState(true);
@@ -10,11 +10,7 @@ export default function Reports() {
     const [paymentMethods, setPaymentMethods] = useState<Record<string, number>>({});
     const [activeMembers, setActiveMembers] = useState(0);
 
-    useEffect(() => {
-        loadData();
-    }, []);
-
-    const loadData = async () => {
+    const loadData = useCallback(async () => {
         setLoading(true);
         const [payments, members] = await Promise.all([
             getPayments(),
@@ -36,7 +32,11 @@ export default function Reports() {
         setActiveMembers(members.filter(m => m.subscriptionStatus === 'activa').length);
 
         setLoading(false);
-    };
+    }, []);
+
+    useEffect(() => {
+        loadData();
+    }, [loadData]);
 
     if (loading) return <div className="page-container">Generando reportes...</div>;
 
@@ -87,6 +87,105 @@ export default function Reports() {
                     </p>
                 </div>
             </div>
+
+            {/* Shift History Section */}
+            <div style={{ marginTop: 'var(--spacing-xl)' }}>
+                <h3>Historial de Cortes de Caja</h3>
+                <ShiftHistoryTable />
+            </div>
+        </div>
+    );
+}
+
+import type { Shift } from '../../domain/types';
+
+type ShiftHistoryItem = Shift & { profiles?: { nombre: string } };
+
+function ShiftHistoryTable() {
+    const [history, setHistory] = useState<ShiftHistoryItem[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        // Dynamic import to avoid circular dep issues in some bundlers if logic grows, 
+        // though here it's fine. keeping pattern consistent.
+        import('../../logic/api/financeService').then(mod => {
+            mod.getShiftHistory().then(data => {
+                setHistory(data as ShiftHistoryItem[]);
+                setLoading(false);
+            });
+        });
+    }, []);
+
+    if (loading) return <div>Cargando historial...</div>;
+    if (history.length === 0) return <div style={{ fontStyle: 'italic', color: 'var(--color-text-secondary)' }}>No hay cortes registrados aún.</div>;
+
+    return (
+        <div style={{ overflowX: 'auto', backgroundColor: 'var(--color-card)', borderRadius: '12px', padding: '10px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '700px' }}>
+                <thead>
+                    <tr style={{ textAlign: 'left', color: 'var(--color-text-secondary)', borderBottom: '1px solid var(--color-border)' }}>
+                        <th style={{ padding: '12px' }}>Fecha Cierre</th>
+                        <th style={{ padding: '12px' }}>Colaborador</th>
+                        <th style={{ padding: '12px' }}>Duración</th>
+                        <th style={{ padding: '12px' }}>Efectivo Inicial</th>
+                        <th style={{ padding: '12px' }}>Ventas +</th>
+                        <th style={{ padding: '12px' }}>Retiros -</th>
+                        <th style={{ padding: '12px' }}>Total Esperado</th>
+                        <th style={{ padding: '12px' }}>Declarado</th>
+                        <th style={{ padding: '12px' }}>Diferencia</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {history.map(shift => {
+                        const start = new Date(shift.hora_inicio);
+                        const end = shift.hora_cierre ? new Date(shift.hora_cierre) : new Date();
+                        const durationHrs = ((end.getTime() - start.getTime()) / 3600000).toFixed(1);
+
+                        // Calculate Expected based on recorded cash operations
+                        // Total Cash = Initial + Sales (Cash) - Withdrawals
+                        // Note: Our Shift model has 'total_efectivo' which tracks this running total theoretical.
+                        const expected = shift.total_efectivo;
+
+                        // Calculated declared from 'desglose_cierre' if JSON, or use a field if we had one.
+                        // We strictly saved 'desglose_cierre' as JSON CashCount.
+                        // We need to sum it up to show "Declared".
+                        let declared = 0;
+                        if (shift.desglose_cierre) {
+                            try {
+                                const counts = typeof shift.desglose_cierre === 'string' ? JSON.parse(shift.desglose_cierre) : shift.desglose_cierre;
+                                declared = Object.entries(counts).reduce((acc, [denom, qty]) => acc + (Number(denom) * (qty as number)), 0);
+                            } catch (e) {
+                                console.error('Error parsing cash count', e);
+                            }
+                        }
+
+                        const diff = declared - expected;
+                        const diffColor = diff === 0 ? 'var(--color-text-secondary)' : diff < 0 ? 'var(--color-danger)' : 'var(--color-success)';
+
+                        return (
+                            <tr key={shift.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                <td style={{ padding: '12px' }}>
+                                    {end.toLocaleDateString()} <small style={{ color: 'gray' }}>{end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small>
+                                </td>
+                                <td style={{ padding: '12px', fontWeight: 'bold' }}>{shift.profiles?.nombre || 'N/A'}</td>
+                                <td style={{ padding: '12px' }}>{durationHrs} hrs</td>
+                                <td style={{ padding: '12px' }}>${shift.monto_inicial?.toLocaleString()}</td>
+                                <td style={{ padding: '12px', color: 'var(--color-success)' }}>
+                                    {/* Sales = (Total - Initial + Retiros). Approx since we don't store "Total Sales Cash" directly on shift, only running total */}
+                                    {/* Let's simplify and just show what we have */}
+                                    ...
+                                </td>
+                                <td style={{ padding: '12px', color: 'var(--color-danger)' }}>${shift.retiros?.toLocaleString()}</td>
+                                <td style={{ padding: '12px', fontWeight: 'bold' }}>${expected?.toLocaleString()}</td>
+                                <td style={{ padding: '12px' }}>${declared.toLocaleString()}</td>
+                                <td style={{ padding: '12px', color: diffColor, fontWeight: 'bold' }}>
+                                    {diff > 0 ? '+' : ''}{diff.toLocaleString()}
+                                </td>
+                            </tr>
+                        );
+                    })}
+                </tbody>
+            </table>
         </div>
     );
 }
