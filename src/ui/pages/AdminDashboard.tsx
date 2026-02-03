@@ -3,7 +3,7 @@ import { getActiveShifts, getWeeklyRevenue, getTodayIncome } from '../../logic/a
 import { getActiveMemberCount } from '../../logic/api/memberService';
 import { getTodayAttendance, getAttendanceHeatmap } from '../../logic/api/attendanceService';
 import { getExpiringMembers, type ExpiringMember } from '../../logic/api/gamificationService';
-import { Users, TrendingUp, Calendar, Clock, AlertCircle, Loader2 } from 'lucide-react';
+import { Users, TrendingUp, Calendar, Clock, AlertCircle, Loader2, MessageCircle } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 export default function AdminDashboard() {
@@ -173,6 +173,25 @@ function ExpiringMembersList() {
         getExpiringMembers().then(setList);
     }, []);
 
+    const openWhatsApp = (phone: string, nombre: string, fechaVencimiento: string) => {
+        // Clean phone number (remove spaces, dashes, etc.)
+        const cleanPhone = phone.replace(/\D/g, '');
+        // Add Mexico country code if not present
+        const fullPhone = cleanPhone.startsWith('52') ? cleanPhone : `52${cleanPhone}`;
+
+        const fechaFormateada = new Date(fechaVencimiento).toLocaleDateString('es-MX', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+
+        const message = `¡Hola ${nombre}! 👋\n\nTe escribimos de *BFIT Gym* para recordarte que tu membresía vence el *${fechaFormateada}*.\n\n¿Te gustaría renovarla para seguir entrenando con nosotros? 💪\n\nEstamos para ayudarte. ¡Saludos!`;
+
+        const encodedMessage = encodeURIComponent(message);
+        window.open(`https://wa.me/${fullPhone}?text=${encodedMessage}`, '_blank');
+    };
+
     if (list.length === 0) return (
         <div style={{ padding: '20px', backgroundColor: 'var(--color-card)', borderRadius: '12px', color: 'var(--color-success)', border: '1px solid var(--color-success)' }}>
             ✅ Todo en orden. No hay membresías próximas a vencer.
@@ -180,7 +199,7 @@ function ExpiringMembersList() {
     );
 
     return (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '15px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '15px' }}>
             {list.map(item => (
                 <div key={item.id} style={{
                     backgroundColor: 'var(--color-card)',
@@ -189,19 +208,59 @@ function ExpiringMembersList() {
                     borderLeft: '4px solid var(--color-warning)',
                     display: 'flex',
                     justifyContent: 'space-between',
-                    alignItems: 'center'
+                    alignItems: 'center',
+                    gap: '12px'
                 }}>
-                    <div>
-                        <div style={{ fontWeight: 'bold', fontSize: '16px' }}>{item.profile?.nombre}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 'bold', fontSize: '16px' }}>
+                            {item.profile?.nombre} {item.profile?.apellido}
+                        </div>
                         <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
                             {item.plan?.nombre} • Vence: {new Date(item.fecha_vencimiento).toLocaleDateString()}
                         </div>
                     </div>
-                    <div style={{ textAlign: 'center' }}>
+                    <div style={{ textAlign: 'center', flexShrink: 0 }}>
                         <div style={{ fontSize: '20px', fontWeight: 'bold', color: 'var(--color-warning)' }}>{item.daysLeft}</div>
                         <div style={{ fontSize: '10px', textTransform: 'uppercase' }}>Días</div>
                     </div>
-                    {/* Add WhatsApp Button later if needed here, or keep simple */}
+                    <button
+                        onClick={() => openWhatsApp(
+                            item.profile?.telefono || '',
+                            item.profile?.nombre || '',
+                            item.fecha_vencimiento
+                        )}
+                        disabled={!item.profile?.telefono}
+                        style={{
+                            backgroundColor: '#25D366',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '8px',
+                            padding: '10px 12px',
+                            cursor: item.profile?.telefono ? 'pointer' : 'not-allowed',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            opacity: item.profile?.telefono ? 1 : 0.5,
+                            flexShrink: 0,
+                            fontWeight: 500,
+                            fontSize: '13px',
+                            transition: 'transform 0.15s ease, box-shadow 0.15s ease'
+                        }}
+                        onMouseEnter={(e) => {
+                            if (item.profile?.telefono) {
+                                e.currentTarget.style.transform = 'scale(1.05)';
+                                e.currentTarget.style.boxShadow = '0 4px 12px rgba(37, 211, 102, 0.4)';
+                            }
+                        }}
+                        onMouseLeave={(e) => {
+                            e.currentTarget.style.transform = 'scale(1)';
+                            e.currentTarget.style.boxShadow = 'none';
+                        }}
+                        title={item.profile?.telefono ? 'Enviar recordatorio por WhatsApp' : 'Sin número de teléfono'}
+                    >
+                        <MessageCircle size={16} />
+                        <span>Recordar</span>
+                    </button>
                 </div>
             ))}
         </div>
