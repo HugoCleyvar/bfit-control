@@ -7,6 +7,7 @@ export interface ExpiringMember {
     fecha_vencimiento: string;
     profile: {
         nombre: string;
+        apellido: string;
         telefono: string;
         foto_url?: string;
     };
@@ -33,7 +34,7 @@ export async function getExpiringMembers(daysThreshold = 5): Promise<ExpiringMem
             usuario_id,
             fecha_vencimiento,
             plan_id,
-            profiles:usuario_id (nombre, telefono, foto_url),
+            profiles:usuario_id (nombre, apellido, telefono, foto_url),
             plans:plan_id (nombre)
         `)
         .eq('estatus', 'activa')
@@ -50,7 +51,7 @@ export async function getExpiringMembers(daysThreshold = 5): Promise<ExpiringMem
         id: string;
         usuario_id: string;
         fecha_vencimiento: string;
-        profiles: { nombre: string; telefono: string; foto_url?: string }[] | { nombre: string; telefono: string; foto_url?: string };
+        profiles: { nombre: string; apellido: string; telefono: string; foto_url?: string }[] | { nombre: string; apellido: string; telefono: string; foto_url?: string };
         plans: { nombre: string }[] | { nombre: string };
     }
 
