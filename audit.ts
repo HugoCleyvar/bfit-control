@@ -6,7 +6,7 @@ import path from 'path';
 
 // 1. Load Env Vars Manually
 console.log('--- 🔍 STARTING SYSTEM AUDIT ---');
-const envPath = path.resolve(process.cwd(), '.env');
+const envPath = path.resolve(process.cwd(), '   ');
 let SUPABASE_URL = '';
 let SUPABASE_KEY = '';
 
