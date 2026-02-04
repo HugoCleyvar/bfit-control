@@ -171,7 +171,7 @@ export default function Members() {
         }
     };
 
-    const { user } = useAuth(); // for collaborator_id
+    const { user, isAdmin } = useAuth(); // for collaborator_id and role check
 
     const handleCreate = async (data: MemberFormData) => {
         const { fecha_vencimiento, ...memberData } = data;
@@ -357,6 +357,7 @@ export default function Members() {
                     initialData={editingMember}
                     onSubmit={editingMember ? handleUpdate : handleCreate}
                     onCancel={() => setIsModalOpen(false)}
+                    showExpirationField={isAdmin}
                 />
             )}
         </div>

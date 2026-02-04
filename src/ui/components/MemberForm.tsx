@@ -16,9 +16,10 @@ interface MemberFormProps {
     onSubmit: (data: MemberFormData) => Promise<boolean>;
     onCancel: () => void;
     title: string;
+    showExpirationField?: boolean; // Only show for admins
 }
 
-export function MemberForm({ initialData, onSubmit, onCancel, title }: MemberFormProps) {
+export function MemberForm({ initialData, onSubmit, onCancel, title, showExpirationField = true }: MemberFormProps) {
     const [loading, setLoading] = useState(false);
 
     // Memoizado para evitar recálculos innecesarios
@@ -129,18 +130,20 @@ export function MemberForm({ initialData, onSubmit, onCancel, title }: MemberFor
                             />
                         </div>
                     </div>
-                    <div style={{ padding: '10px', backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: 'var(--radius-md)', border: '1px dashed var(--color-border)' }}>
-                        <label style={{ display: 'block', marginBottom: '8px', fontSize: 'var(--font-size-sm)', color: 'var(--color-warning)' }}>Vencimiento Membresía (Manual)</label>
-                        <div style={{ position: 'relative' }}>
-                            <Calendar size={16} style={{ position: 'absolute', left: '10px', top: '12px', color: 'gray' }} />
-                            <input
-                                type="date"
-                                value={formData.fecha_vencimiento}
-                                onChange={e => setFormData({ ...formData, fecha_vencimiento: e.target.value })}
-                                style={{ width: '100%', padding: '10px 10px 10px 35px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg)', color: 'white' }}
-                            />
+                    {showExpirationField && (
+                        <div style={{ padding: '10px', backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: 'var(--radius-md)', border: '1px dashed var(--color-border)' }}>
+                            <label style={{ display: 'block', marginBottom: '8px', fontSize: 'var(--font-size-sm)', color: 'var(--color-warning)' }}>Vencimiento Membresía (Manual)</label>
+                            <div style={{ position: 'relative' }}>
+                                <Calendar size={16} style={{ position: 'absolute', left: '10px', top: '12px', color: 'gray' }} />
+                                <input
+                                    type="date"
+                                    value={formData.fecha_vencimiento}
+                                    onChange={e => setFormData({ ...formData, fecha_vencimiento: e.target.value })}
+                                    style={{ width: '100%', padding: '10px 10px 10px 35px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg)', color: 'white' }}
+                                />
+                            </div>
                         </div>
-                    </div>
+                    )}
 
                     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: 'var(--spacing-md)' }}>
                         <button type="button" onClick={onCancel} style={{ padding: '10px 20px', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'transparent', color: 'white', cursor: 'pointer' }}>
