@@ -72,7 +72,7 @@ export async function createCollaborator(email: string, password: string, nombre
 
     if (!soupUrl || !soupKey) return { success: false, error: 'Configuración faltante' };
 
-    // Create a temporary client not to affect global auth state
+    // Create a temporary client not to affect global auth state (for signUp only)
     const tempClient = createClient(soupUrl, soupKey, {
         auth: {
             persistSession: false, // Critical: Don't overwrite admin session
@@ -88,7 +88,7 @@ export async function createCollaborator(email: string, password: string, nombre
             data: {
                 nombre: nombre,
                 role: 'colaborador',
-                rol: 'colaborador' // Legacy/Redundancy support
+                rol: 'colaborador'
             }
         }
     });
@@ -96,32 +96,26 @@ export async function createCollaborator(email: string, password: string, nombre
     if (error) return { success: false, error: error.message };
     if (!data.user) return { success: false, error: 'No se pudo crear el usuario' };
 
-    // Since signUp triggers on the client, we might need to manually ensure the profile is created
-    // if the trigger fails or RLS blocks insert. However, with our new RLS allowing insert Own Profile,
-    // and signUp usually handling this via Trigger in pure Supabase, or Client doing it.
-    // Wait, the "Users can insert own profile" policy works if the client inserts it.
-    // Supabase Auth usually doesn't auto-insert into public.profiles unless there's a Trigger.
-    // If we rely on a Trigger, we are good. If we rely on client-side insert, `tempClient` needs to do it.
-
-    // Let's force insert profile with tempClient if it didn't happen via trigger
-    const { error: profileError } = await tempClient.from('profiles').insert({
+    // Use the MAIN supabase client (with admin session) to insert the profile
+    // The tempClient has no session so RLS blocks its inserts
+    const { error: profileError } = await supabase.from('profiles').insert({
         id: data.user.id,
         email: email,
         nombre: nombre,
         rol: 'colaborador',
         role: 'colaborador',
-        activo: true
+        activo: true,
+        is_active: true
     });
 
-    // If profile error is "duplicate key", it means trigger handled it, so we ignore. 
-    // If it's permission error, well, we hope trigger worked.
-    // But commonly, simple setups use Trigger. Let's assume Trigger or Client Insert.
-    // Based on `loginWithEmail` reading `profiles`, it implies `profiles` is the source of truth.
-    // We'll try best effort insert.
-
-    if (profileError && !profileError.message.includes('duplicate')) {
-        console.warn('Manual profile insert failed, hoping for trigger:', profileError);
+    if (profileError) {
+        // If duplicate key, trigger already created it - that's fine
+        if (!profileError.message.includes('duplicate')) {
+            console.error('Profile creation failed:', profileError);
+            return { success: false, error: 'Usuario creado pero perfil no se pudo guardar. Contacta al administrador.' };
+        }
     }
 
+    console.log('Collaborator created successfully:', email);
     return { success: true };
 }

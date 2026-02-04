@@ -112,12 +112,20 @@ function mapMembersWithStatus(data: MemberWithSubscriptions[]): MemberWithStatus
 
     return data.map((member) => {
         // Find the relevant subscription (active or latest)
-        // We prioritize 'activa', then check for 'vencida' if no active found.
-        const subs = member.subscriptions as Subscription[];
-        const activeSub = subs.find(s => s.estatus === 'activa');
-        const latestSub = subs.sort((a, b) => new Date(b.fecha_vencimiento).getTime() - new Date(a.fecha_vencimiento).getTime())[0];
+        // IMPORTANT: Sort by fecha_vencimiento DESC first, then prioritize
+        // active subscriptions with FUTURE expiration dates
+        const subs = (member.subscriptions as Subscription[])
+            .sort((a, b) => new Date(b.fecha_vencimiento).getTime() - new Date(a.fecha_vencimiento).getTime());
 
-        const targetSub = activeSub || latestSub;
+        // First, try to find an active subscription with valid (future) expiration
+        const validActiveSub = subs.find(s =>
+            s.estatus === 'activa' && new Date(s.fecha_vencimiento) > today
+        );
+
+        // Fallback to latest subscription regardless of status
+        const latestSub = subs[0];
+
+        const targetSub = validActiveSub || latestSub;
 
         let status: MemberWithStatus['subscriptionStatus'] = 'sin_suscripcion';
         let daysResult = 0;

@@ -1,10 +1,26 @@
 import { supabase } from './supabase';
 import type { Payment, Shift, CashCount, Expense } from '../../domain/types';
 
-export async function getPayments(limit = 50): Promise<Payment[]> {
+export interface PaymentWithDetails extends Payment {
+    member?: { nombre: string; apellido: string; telefono?: string };
+    plan?: { nombre: string; duracion_dias: number };
+}
+
+export async function getPayments(limit = 50): Promise<PaymentWithDetails[]> {
     const { data, error } = await supabase
         .from('payments')
-        .select('*')
+        .select(`
+            *,
+            member:members (
+                nombre,
+                apellido,
+                telefono
+            ),
+            plan:plans (
+                nombre,
+                duracion_dias
+            )
+        `)
         .order('fecha_pago', { ascending: false })
         .limit(limit);
 
@@ -12,7 +28,7 @@ export async function getPayments(limit = 50): Promise<Payment[]> {
         console.error('Error getting payments:', error);
         return [];
     }
-    return data as Payment[];
+    return data as PaymentWithDetails[];
 }
 
 export async function getTodayIncome(): Promise<number> {

@@ -1,17 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getPayments, registerPayment } from '../../logic/api/financeService';
+import { getPayments, registerPayment, type PaymentWithDetails } from '../../logic/api/financeService';
 import { getPlans, type Plan } from '../../logic/api/planService';
-import { getProducts, processSaleDeduction, type Product } from '../../logic/api/productService'; // New Import
+import { getProducts, processSaleDeduction, type Product } from '../../logic/api/productService';
 import { useAuth } from '../../logic/authContext';
 import { useShift } from '../../logic/shiftContext';
-import type { Payment } from '../../domain/types';
 import { DataTable } from '../components/DataTable';
 import type { Column } from '../components/DataTable';
 import { MemberSearch } from '../components/MemberSearch';
-import { CreditCard, Banknote, DollarSign, PlusCircle } from 'lucide-react';
+import { CreditCard, Banknote, DollarSign, PlusCircle, MessageCircle } from 'lucide-react';
 
 export default function PaymentsPage() {
-    const [payments, setPayments] = useState<Payment[]>([]);
+    const [payments, setPayments] = useState<PaymentWithDetails[]>([]);
     const [loading, setLoading] = useState(true);
 
     // Form State
@@ -118,11 +117,44 @@ export default function PaymentsPage() {
         }
     };
 
-    const columns: Column<Payment>[] = [
+    // Helper function to generate WhatsApp receipt message
+    const generateWhatsAppReceipt = (payment: PaymentWithDetails) => {
+        if (!payment.member || !payment.plan) return '';
+
+        const phone = payment.member.telefono?.replace(/\D/g, '') || '';
+        if (!phone) return '';
+
+        const paymentDate = new Date(payment.fecha_pago).toLocaleDateString('es-MX');
+        const expirationDate = new Date(
+            new Date(payment.fecha_pago).getTime() + (payment.plan.duracion_dias * 24 * 60 * 60 * 1000)
+        ).toLocaleDateString('es-MX');
+
+        const message = `🏋️ *BFIT GYM - COMPROBANTE DE PAGO*
+
+¡Hola ${payment.member.nombre}! Tu pago ha sido registrado exitosamente.
+
+📋 *Detalles:*
+• Plan: ${payment.plan.nombre}
+• Monto: $${payment.total.toFixed(2)}
+• Fecha: ${paymentDate}
+• Vigencia hasta: ${expirationDate}
+
+¡Gracias por tu preferencia! 💪`;
+
+        return `https://wa.me/52${phone}?text=${encodeURIComponent(message)}`;
+    };
+
+    const columns: Column<PaymentWithDetails>[] = [
         { header: 'Fecha', accessor: (p) => new Date(p.fecha_pago).toLocaleDateString() + ' ' + new Date(p.fecha_pago).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
         {
-            header: 'Concepto / Miembro',
-            accessor: (p) => p.concepto ? p.concepto : (p.usuario_id ? 'Membresía' : 'Venta General')
+            header: 'Cliente',
+            accessor: (p) => p.member
+                ? `${p.member.nombre} ${p.member.apellido}`
+                : (p.concepto || 'Venta General')
+        },
+        {
+            header: 'Plan / Concepto',
+            accessor: (p) => p.plan ? p.plan.nombre : (p.concepto || '-')
         },
         {
             header: 'Monto',
@@ -136,6 +168,36 @@ export default function PaymentsPage() {
                     {p.metodo_pago}
                 </span>
             )
+        },
+        {
+            header: 'Comprobante',
+            accessor: (p) => {
+                const whatsappLink = generateWhatsAppReceipt(p);
+                if (!whatsappLink) return <span style={{ color: 'var(--color-text-secondary)', fontSize: '12px' }}>-</span>;
+
+                return (
+                    <a
+                        href={whatsappLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            padding: '6px 10px',
+                            backgroundColor: '#25D366',
+                            color: 'white',
+                            borderRadius: '6px',
+                            textDecoration: 'none',
+                            fontSize: '12px',
+                            fontWeight: 500
+                        }}
+                    >
+                        <MessageCircle size={14} />
+                        WhatsApp
+                    </a>
+                );
+            }
         },
     ];
 
