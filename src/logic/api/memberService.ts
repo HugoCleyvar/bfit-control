@@ -4,6 +4,7 @@ import type { Member, Subscription } from '../../domain/types';
 export interface MemberWithStatus extends Member {
     subscriptionStatus: 'activa' | 'vencida' | 'cancelada' | 'sin_suscripcion';
     daysRemaining: number;
+    currentPlanName?: string;
 }
 
 export async function getMembers(limit = 50): Promise<MemberWithStatus[]> {
@@ -13,7 +14,8 @@ export async function getMembers(limit = 50): Promise<MemberWithStatus[]> {
         .select(`
             *,
             subscriptions (
-                *
+                *,
+                plan:plans(nombre)
             )
         `)
         .order('fecha_registro', { ascending: false })
@@ -62,7 +64,8 @@ export async function searchMembers(query: string): Promise<MemberWithStatus[]> 
         .from('members')
         .select(`
             *,
-            subscriptions (*)
+            *,
+            subscriptions (*, plan:plans(nombre))
         `)
         .or(`nombre.ilike.%${query}%,apellido.ilike.%${query}%`)
         .limit(10);
@@ -79,7 +82,7 @@ export async function findMemberForCheckIn(query: string): Promise<MemberWithSta
     // 1. Try by ID (exact match)
     const { data: byId } = await supabase
         .from('members')
-        .select(`*, subscriptions (*)`)
+        .select(`*, subscriptions (*, plan:plans(nombre))`)
         .eq('id', query)
         .maybeSingle();
 
@@ -104,7 +107,7 @@ export async function findMemberForCheckIn(query: string): Promise<MemberWithSta
 }
 
 interface MemberWithSubscriptions extends Member {
-    subscriptions: Subscription[];
+    subscriptions: (Subscription & { plan?: { nombre: string } })[];
 }
 
 function mapMembersWithStatus(data: MemberWithSubscriptions[]): MemberWithStatus[] {
@@ -153,7 +156,8 @@ function mapMembersWithStatus(data: MemberWithSubscriptions[]): MemberWithStatus
             estatus: member.estatus,
             fecha_registro: member.fecha_registro,
             subscriptionStatus: status,
-            daysRemaining: daysResult
+            daysRemaining: daysResult,
+            currentPlanName: targetSub?.plan?.nombre
         };
     });
 }
@@ -213,12 +217,9 @@ export async function updateSubscriptionExpiration(memberId: string, newDate: st
 
     if (!targetSub) {
         // If no sub exists, we need to create one.
-        // Audit Fix: Require valid planId or fail, don't pick random.
-
         let targetPlanId = planId;
 
-        // If no planId provided, try to find a "Standard" or "Mensual" plan as fallback,
-        // but getting ANY plan is dangerous.
+        // If no planId provided, try to find a "Standard" or "Mensual" plan as fallback
         if (!targetPlanId) {
             const { data: plans } = await supabase
                 .from('plans')

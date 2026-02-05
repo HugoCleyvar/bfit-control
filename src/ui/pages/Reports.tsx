@@ -141,14 +141,14 @@ function ShiftHistoryTable() {
                         const end = shift.hora_cierre ? new Date(shift.hora_cierre) : new Date();
                         const durationHrs = ((end.getTime() - start.getTime()) / 3600000).toFixed(1);
 
-                        // Calculate Expected based on recorded cash operations
-                        // Total Cash = Initial + Sales (Cash) - Withdrawals
-                        // Note: Our Shift model has 'total_efectivo' which tracks this running total theoretical.
+                        // Expected (Total theoretical cash in drawer)
                         const expected = shift.total_efectivo;
 
-                        // Calculated declared from 'desglose_cierre' if JSON, or use a field if we had one.
-                        // We strictly saved 'desglose_cierre' as JSON CashCount.
-                        // We need to sum it up to show "Declared".
+                        // Calculate Sales
+                        // Sales = Expected (Total Cash in Hand theoretical) - Initial Cash + Withdrawals
+                        const sales = (expected || 0) - (shift.monto_inicial || 0) + (shift.retiros || 0);
+
+                        // Calculated declared from 'desglose_cierre'
                         let declared = 0;
                         if (shift.desglose_cierre) {
                             try {
@@ -171,9 +171,7 @@ function ShiftHistoryTable() {
                                 <td style={{ padding: '12px' }}>{durationHrs} hrs</td>
                                 <td style={{ padding: '12px' }}>${shift.monto_inicial?.toLocaleString()}</td>
                                 <td style={{ padding: '12px', color: 'var(--color-success)' }}>
-                                    {/* Sales = (Total - Initial + Retiros). Approx since we don't store "Total Sales Cash" directly on shift, only running total */}
-                                    {/* Let's simplify and just show what we have */}
-                                    ...
+                                    ${sales.toLocaleString()}
                                 </td>
                                 <td style={{ padding: '12px', color: 'var(--color-danger)' }}>${shift.retiros?.toLocaleString()}</td>
                                 <td style={{ padding: '12px', fontWeight: 'bold' }}>${expected?.toLocaleString()}</td>

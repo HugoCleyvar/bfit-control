@@ -138,7 +138,12 @@ export default function AttendancePage() {
 
                 {/* Recent Attendance */}
                 <div>
-                    <h3 style={{ marginBottom: 'var(--spacing-md)' }}>Visitas de Hoy</h3>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--spacing-md)' }}>
+                        <h3>Visitas de Hoy</h3>
+                        <span style={{ fontSize: '14px', color: 'var(--color-text-secondary)' }}>
+                            Permitidas: <b>{attendanceList.filter(a => a.permitido).length}</b>
+                        </span>
+                    </div>
                     <DataTable
                         columns={columns}
                         data={attendanceList}

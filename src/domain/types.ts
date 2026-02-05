@@ -24,6 +24,8 @@ export interface Member {
     estatus: UserStatus;
     fecha_registro: string; // ISO Date
     colaborador_id?: UUID; // Who registered
+    visitas_disponibles?: number;
+    ultima_visita?: string; // ISO Date
 }
 
 // Planes

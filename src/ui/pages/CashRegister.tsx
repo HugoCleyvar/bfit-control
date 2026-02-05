@@ -270,6 +270,9 @@ export default function CashRegister() {
                                 <span>Esperado en Sistema:</span>
                                 <span>${shift.total_efectivo.toLocaleString()}</span>
                             </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px', fontSize: '14px', color: 'var(--color-text-secondary)' }}>
+                                <span>(Ventas Totales: ${(shift.total_efectivo - shift.monto_inicial + shift.retiros).toLocaleString()})</span>
+                            </div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
                                 <span>Contado Real:</span>
                                 <span style={{ fontWeight: 'bold' }}>${countedCash.toLocaleString()}</span>
