@@ -176,7 +176,22 @@ export async function openShift(userId: string, initialCash: number): Promise<bo
 }
 
 export async function registerPayment(payment: Omit<Payment, 'id'>): Promise<{ success: boolean; message?: string }> {
-    // 1. Get Open Shift
+    // 0. Double Payment Protection (5 min rule)
+    const fiveMinsAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const { data: duplicates } = await supabase
+        .from('payments')
+        .select('id')
+        .eq('usuario_id', payment.usuario_id)
+        .eq('total', payment.total)
+        .gte('fecha_pago', fiveMinsAgo);
+
+    if (duplicates && duplicates.length > 0) {
+        // Simple blocking mechanism. In a real app we might ask for "Confirmation", but API returns error here.
+        return { success: false, message: 'DUPLICADO: Ya existe un pago idéntico registrado hace menos de 5 minutos.' };
+    }
+
+    // 1. Get Open Shift (Global - specific requirement: Attribute to OPEN shift)
+    // We try to find the open shift. If multiple, we might have an issue, but we pick the single one.
     const currentShift = await getCurrentShift();
     const shiftId = currentShift?.id;
 
@@ -189,7 +204,7 @@ export async function registerPayment(payment: Omit<Payment, 'id'>): Promise<{ s
         .from('payments')
         .insert({
             ...payment,
-            turno_id: shiftId
+            turno_id: shiftId // Attribute to ANY open shift found
         });
 
     if (insertError) {
@@ -203,9 +218,25 @@ export async function registerPayment(payment: Omit<Payment, 'id'>): Promise<{ s
     if (payment.usuario_id && payment.plan_id) {
         try {
             // Get Plan Duration
-            const { data: plan } = await supabase.from('plans').select('duracion_dias').eq('id', payment.plan_id).single();
+            const { data: plan } = await supabase.from('plans').select('nombre, duracion_dias').eq('id', payment.plan_id).single();
 
             if (plan) {
+                // TICKET LOGIC: Check if plan is a "Pack" or "Visit"
+                const normName = plan.nombre.toLowerCase();
+                if (normName.includes('visita') || normName.includes('paquete')) {
+                    let ticketsToAdd = 1;
+                    const match = normName.match(/(\d+)\s*visita/); // Match "10 visitas", "5 visita" etc.
+                    if (match) {
+                        ticketsToAdd = parseInt(match[1]);
+                    }
+
+                    if (ticketsToAdd > 0) {
+                        const { data: member } = await supabase.from('members').select('visitas_disponibles').eq('id', payment.usuario_id).single();
+                        const newCount = (member?.visitas_disponibles || 0) + ticketsToAdd;
+                        await supabase.from('members').update({ visitas_disponibles: newCount }).eq('id', payment.usuario_id);
+                    }
+                }
+
                 // Get Latest Sub to decide: Extend or New
                 const { data: subs } = await supabase
                     .from('subscriptions')
@@ -227,11 +258,54 @@ export async function registerPayment(payment: Omit<Payment, 'id'>): Promise<{ s
                     }
                 }
 
+                // DATE LOGIC: Date-to-Date (Month + 1 - 1 Day)
+                // Base date is either Now (New) or Expiry (Extension)
+                let baseDate = isExtension && latestSub ? new Date(latestSub.fecha_vencimiento) : now;
+
+                // If plan is monthly (approx 30 days), use Date Logic
+                // If it's a "Day Pass" (1 day), use simple math.
+                // Threshold: Let's apply "Month Logic" for plans >= 28 days.
+                let newEnd: Date;
+
+                if (plan.duracion_dias >= 28) {
+                    const monthsToAdd = Math.round(plan.duracion_dias / 30);
+                    const targetDate = new Date(baseDate);
+                    const originalDay = targetDate.getDate();
+
+                    // Add months safely without overflow first
+                    targetDate.setMonth(targetDate.getMonth() + monthsToAdd);
+
+                    // Check for overflow (e.g. Jan 31 -> Feb 28/March 2)
+                    // If day changed and we are in a different month than expected, went too far.
+                    // Actually JS setMonth(current + 1) moves Jan 31 to March X.
+                    // We want Feb 28 in that case.
+
+                    // Better approach:
+                    const d = new Date(baseDate);
+                    d.setMonth(d.getMonth() + monthsToAdd);
+                    if (d.getDate() !== originalDay) {
+                        // Overflowed! Go back to last day of previous month
+                        d.setDate(0);
+                    }
+
+                    // Now d is "Same Day Next Month" (clamped).
+                    // Subtract 1 Day as per rule "08/07 -> 07/08"
+                    d.setDate(d.getDate() - 1);
+
+                    newEnd = d;
+                } else {
+                    // Short term plans - add days
+                    newEnd = new Date(baseDate.getTime() + (plan.duracion_dias * 24 * 60 * 60 * 1000));
+                }
+
+                // Safety: Ensure newEnd is effectively in the future
+                if (newEnd <= baseDate) {
+                    newEnd = new Date(baseDate.getTime() + (plan.duracion_dias * 24 * 60 * 60 * 1000));
+                }
+
+
                 if (isExtension && latestSub) {
                     // EXTEND existing
-                    const currentEnd = new Date(latestSub.fecha_vencimiento);
-                    const newEnd = new Date(currentEnd.getTime() + (plan.duracion_dias * 24 * 60 * 60 * 1000));
-
                     const { error: subError } = await supabase.from('subscriptions').update({
                         fecha_vencimiento: newEnd.toISOString(),
                         estatus: 'activa', // Ensure active
@@ -243,13 +317,14 @@ export async function registerPayment(payment: Omit<Payment, 'id'>): Promise<{ s
                 } else {
                     // NEW Subscription
                     const startDate = now;
-                    const endDate = new Date(startDate.getTime() + (plan.duracion_dias * 24 * 60 * 60 * 1000));
+                    // If new, start now, end at calculated date
+                    // Note: If Base was 'Now', newEnd is already correct relative to now.
 
                     const { error: subError } = await supabase.from('subscriptions').insert({
                         usuario_id: payment.usuario_id,
                         plan_id: payment.plan_id,
                         fecha_inicio: startDate.toISOString(),
-                        fecha_vencimiento: endDate.toISOString(),
+                        fecha_vencimiento: newEnd.toISOString(),
                         estatus: 'activa'
                     });
 

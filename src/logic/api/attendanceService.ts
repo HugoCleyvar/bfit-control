@@ -54,7 +54,55 @@ export async function registerCheckIn(memberIdOrName: string, colaboradorId?: st
     }
 
     // 2. Validate Status
-    const canAccess = member.subscriptionStatus === 'activa';
+    const planName = member.currentPlanName?.toLowerCase() || '';
+    const isPackPlan = planName.includes('visita') || planName.includes('paquete');
+
+    // Normal access only if NOT a pack plan and status is active
+    let canAccess = member.subscriptionStatus === 'activa' && !isPackPlan;
+    let message = `Bienvenido, ${member.nombre}!`;
+
+    // TICKET SYSTEM LOGIC
+    // Force check for tickets if it's a pack plan OR if subscription is not active
+    if ((isPackPlan || !canAccess) && (member.visitas_disponibles ?? 0) > 0) {
+        canAccess = true;
+        message = `Bienvenido, ${member.nombre}! (Visita prepagada)`;
+
+
+        // Check 24h Cooldown (Same Day Reset)
+        const lastVisit = member.ultima_visita ? new Date(member.ultima_visita) : null;
+        const now = new Date();
+        const isSameDay = lastVisit &&
+            lastVisit.getDate() === now.getDate() &&
+            lastVisit.getMonth() === now.getMonth() &&
+            lastVisit.getFullYear() === now.getFullYear();
+
+        if (!isSameDay) {
+            // Decrement ticket
+            const newCount = (member.visitas_disponibles ?? 0) - 1;
+
+            // Update Member logic
+            const { error: updateError } = await supabase
+                .from('members')
+                .update({
+                    visitas_disponibles: newCount,
+                    ultima_visita: now.toISOString()
+                })
+                .eq('id', member.id);
+
+            if (updateError) {
+                console.error('Error updating tickets', updateError);
+                return { success: false, message: 'Error al procesar visita' };
+            }
+            message = `Bienvenido, ${member.nombre}! (Quedan: ${newCount} visitas)`;
+        } else {
+            // Just update time, don't deduct
+            await supabase.from('members').update({ ultima_visita: now.toISOString() }).eq('id', member.id);
+        }
+    } else if (canAccess) {
+        // Normal subscription access - just update last visit
+        await supabase.from('members').update({ ultima_visita: new Date().toISOString() }).eq('id', member.id);
+    }
+
 
     // 3. Record Attendance
     const { error } = await supabase
@@ -75,7 +123,7 @@ export async function registerCheckIn(memberIdOrName: string, colaboradorId?: st
     if (canAccess) {
         return {
             success: true,
-            message: `Bienvenido, ${member.nombre}!`,
+            message: message,
             member: { nombre: member.nombre, foto_url: member.foto_url }
         };
     } else {
@@ -83,6 +131,11 @@ export async function registerCheckIn(memberIdOrName: string, colaboradorId?: st
         if (member.subscriptionStatus === 'vencida') reason = 'Membresía Vencida';
         if (member.subscriptionStatus === 'sin_suscripcion') reason = 'Sin Membresía Activa';
         if (member.subscriptionStatus === 'cancelada') reason = 'Membresía Cancelada';
+
+        // Add info about tickets if 0
+        if ((member.visitas_disponibles ?? 0) <= 0) {
+            reason += ' (Sin visitas disponibles)';
+        }
 
         return {
             success: false,
