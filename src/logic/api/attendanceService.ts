@@ -61,23 +61,30 @@ export async function registerCheckIn(memberIdOrName: string, colaboradorId?: st
     let canAccess = member.subscriptionStatus === 'activa' && !isPackPlan;
     let message = `Bienvenido, ${member.nombre}!`;
 
+    // FIX: Debugging Logs
+    console.log(`[CheckIn] Member: ${member.nombre}, Tickets: ${member.visitas_disponibles}, LastVisit: ${member.ultima_visita}`);
+
+    // Check 24h Cooldown (Same Day Reset) BEFORE deducting logic
+    const lastVisit = member.ultima_visita ? new Date(member.ultima_visita) : null;
+    const now = new Date();
+
+    // Robust Same Day Check
+    const isSameDay = lastVisit && lastVisit.toDateString() === now.toDateString();
+
+    console.log(`[CheckIn] isSameDay: ${isSameDay} (Last: ${lastVisit?.toDateString()} vs Now: ${now.toDateString()})`);
+
     // TICKET SYSTEM LOGIC
-    // Force check for tickets if it's a pack plan OR if subscription is not active
-    if ((isPackPlan || !canAccess) && (member.visitas_disponibles ?? 0) > 0) {
+    // Allow access if:
+    // 1. Pack/Visit Plan (or subscription invalid) AND has Tickets > 0
+    // 2. OR, it is a Re-entry (Same Day) regardless of tickets
+    const hasTickets = (member.visitas_disponibles ?? 0) > 0;
+
+    if ((isPackPlan || !canAccess) && (hasTickets || isSameDay)) {
         canAccess = true;
         message = `Bienvenido, ${member.nombre}! (Visita prepagada)`;
 
-
-        // Check 24h Cooldown (Same Day Reset)
-        const lastVisit = member.ultima_visita ? new Date(member.ultima_visita) : null;
-        const now = new Date();
-        const isSameDay = lastVisit &&
-            lastVisit.getDate() === now.getDate() &&
-            lastVisit.getMonth() === now.getMonth() &&
-            lastVisit.getFullYear() === now.getFullYear();
-
         if (!isSameDay) {
-            // Decrement ticket
+            // Decrement ticket only if NEW day
             const newCount = (member.visitas_disponibles ?? 0) - 1;
 
             // Update Member logic
@@ -95,8 +102,9 @@ export async function registerCheckIn(memberIdOrName: string, colaboradorId?: st
             }
             message = `Bienvenido, ${member.nombre}! (Quedan: ${newCount} visitas)`;
         } else {
-            // Just update time, don't deduct
+            // Just update time (Re-entry), don't deduct
             await supabase.from('members').update({ ultima_visita: now.toISOString() }).eq('id', member.id);
+            message = `Bienvenido de nuevo, ${member.nombre}! (Reingreso)`;
         }
     } else if (canAccess) {
         // Normal subscription access - just update last visit
