@@ -236,7 +236,11 @@ export async function registerPayment(payment: Omit<Payment, 'id'> & { force?: b
                     if (ticketsToAdd > 0) {
                         const { data: member } = await supabase.from('members').select('visitas_disponibles').eq('id', payment.usuario_id).single();
                         const newCount = (member?.visitas_disponibles || 0) + ticketsToAdd;
-                        await supabase.from('members').update({ visitas_disponibles: newCount }).eq('id', payment.usuario_id);
+                        const { error: ticketError } = await supabase.from('members').update({ visitas_disponibles: newCount }).eq('id', payment.usuario_id);
+                        if (ticketError) {
+                            console.error('CRITICAL: Failed to update tickets after payment', ticketError);
+                            warningMessage = 'Pago registrado, pero ERROR al asignar visitas. Verificar manualmente.';
+                        }
                     }
                 }
 

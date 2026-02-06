@@ -95,7 +95,7 @@ export async function findMemberForCheckIn(query: string): Promise<MemberWithSta
     // but for now we take the first strict match.
     const { data: byName } = await supabase
         .from('members')
-        .select(`*, subscriptions (*)`)
+        .select(`*, subscriptions (*, plan:plans(nombre))`)
         .or(`nombre.ilike.%${query}%,apellido.ilike.%${query}%`)
         .limit(1);
 
