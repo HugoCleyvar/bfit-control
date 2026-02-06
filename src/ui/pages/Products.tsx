@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getProducts, createProduct, updateProduct, deleteProduct, type Product } from '../../logic/api/productService';
 import { DataTable, type Column } from '../components/DataTable';
 import { PlusCircle, AlertTriangle, Edit, Trash2 } from 'lucide-react';
+import { useAuth } from '../../logic/authContext';
 
 interface ProductFormData {
     name: string;
@@ -13,6 +14,7 @@ interface ProductFormData {
 }
 
 export default function ProductsPage() {
+    const { isAdmin } = useAuth();
     const [products, setProducts] = useState<Product[]>([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingProduct, setEditingProduct] = useState<Product | undefined>(undefined);
@@ -82,22 +84,24 @@ export default function ProductsPage() {
         <div className="page-container">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--spacing-lg)' }}>
                 <h2>Inventario</h2>
-                <button
-                    onClick={() => { setEditingProduct(undefined); setIsModalOpen(true); }}
-                    style={{ display: 'flex', gap: '8px', alignItems: 'center' }}
-                >
-                    <PlusCircle size={18} /> Nuevo Producto
-                </button>
+                {isAdmin && (
+                    <button
+                        onClick={() => { setEditingProduct(undefined); setIsModalOpen(true); }}
+                        style={{ display: 'flex', gap: '8px', alignItems: 'center' }}
+                    >
+                        <PlusCircle size={18} /> Nuevo Producto
+                    </button>
+                )}
             </div>
 
             <DataTable
                 columns={columns}
                 data={products}
                 keyExtractor={p => p.id}
-                actions={[
+                actions={isAdmin ? [
                     { icon: Edit, onClick: (p) => { setEditingProduct(p); setIsModalOpen(true); } },
                     { icon: Trash2, onClick: (p) => handleDelete(p.id), className: 'text-danger' }
-                ]}
+                ] : undefined}
             />
 
             {isModalOpen && (

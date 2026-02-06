@@ -26,10 +26,11 @@ export default function AdminDashboard() {
                 getTodayIncome(),
                 getTodayAttendance()
             ]);
-            const uniqueAllowed = new Set(attendance.filter(a => a.permitido).map(a => a.usuario_id)).size;
+            // Count total rows directly (Total Visits) instead of unique users
+            const totalVisits = attendance.filter(a => a.permitido).length;
             setTotalMembers(activeCount);
             setTodayIncome(income);
-            setTodayAttendance(uniqueAllowed);
+            setTodayAttendance(totalVisits); // FIXED: Was uniqueAllowed
             setLoadingKPIs(false);
 
             // Phase 2: Charts (Slow)
