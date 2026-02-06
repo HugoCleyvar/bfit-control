@@ -157,7 +157,9 @@ function mapMembersWithStatus(data: MemberWithSubscriptions[]): MemberWithStatus
             fecha_registro: member.fecha_registro,
             subscriptionStatus: status,
             daysRemaining: daysResult,
-            currentPlanName: targetSub?.plan?.nombre
+            currentPlanName: targetSub?.plan?.nombre,
+            visitas_disponibles: member.visitas_disponibles,
+            ultima_visita: member.ultima_visita // Pass through for check-in logic
         };
     });
 }
