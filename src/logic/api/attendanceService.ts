@@ -9,8 +9,10 @@ export interface CheckInResult {
 }
 
 export async function getTodayAttendance(): Promise<Attendance[]> {
-    // For MVP, just get last 50 check-ins. Real app would filter by date(now())
-    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    // Use local time start of day validation
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0).toISOString();
+    const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59).toISOString();
 
     // Using date filter for accuracy as per audit
     const { data, error } = await supabase
@@ -23,7 +25,8 @@ export async function getTodayAttendance(): Promise<Attendance[]> {
                 foto_url
             )
         `)
-        .gte('fecha_hora', `${today}T00:00:00`)
+        .gte('fecha_hora', startOfDay)
+        .lte('fecha_hora', endOfDay)
         .order('fecha_hora', { ascending: false });
 
     if (error) {
