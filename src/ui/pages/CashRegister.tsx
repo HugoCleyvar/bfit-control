@@ -266,21 +266,29 @@ export default function CashRegister() {
                         }} />
 
                         <div style={{ marginTop: '20px', padding: '15px', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px', paddingBottom: '10px', borderBottom: '1px solid #444' }}>
+                                <span style={{ fontWeight: 'bold' }}>Resumen de Cierre:</span>
+                            </div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
-                                <span>Esperado en Sistema:</span>
+                                <span>Inventario de Cierre:</span>
+                                <span>[Completado]</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
+                                <span>Total Ventas Sistema:</span>
+                                <span>${(shift.total_efectivo - shift.monto_inicial + shift.retiros).toLocaleString()}</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px' }}>
+                                <span>Efectivo Esperado:</span>
                                 <span>${shift.total_efectivo.toLocaleString()}</span>
                             </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px', fontSize: '14px', color: 'var(--color-text-secondary)' }}>
-                                <span>(Ventas Totales: ${(shift.total_efectivo - shift.monto_inicial + shift.retiros).toLocaleString()})</span>
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
-                                <span>Contado Real:</span>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px', paddingTop: '10px', borderTop: '1px solid #444' }}>
+                                <span>Contado Real (Billetes/Monedas):</span>
                                 <span style={{ fontWeight: 'bold' }}>${countedCash.toLocaleString()}</span>
                             </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #444', fontSize: '18px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '10px', fontSize: '18px' }}>
                                 <span>Diferencia:</span>
                                 <span style={{ color: (countedCash - shift.total_efectivo) === 0 ? 'var(--color-success)' : 'var(--color-warning)' }}>
-                                    {(countedCash - shift.total_efectivo).toLocaleString()}
+                                    {(countedCash - shift.total_efectivo) === 0 ? '✓ Cuadrado' : (countedCash - shift.total_efectivo).toLocaleString()}
                                 </span>
                             </div>
                         </div>

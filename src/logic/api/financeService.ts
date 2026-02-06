@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import type { Payment, Shift, CashCount, Expense } from '../../domain/types';
+import { calculateNominalExpiration } from '../../domain/dateUtils';
 
 export interface PaymentWithDetails extends Payment {
     member?: { nombre: string; apellido: string; telefono?: string };
@@ -175,19 +176,21 @@ export async function openShift(userId: string, initialCash: number): Promise<bo
     return true;
 }
 
-export async function registerPayment(payment: Omit<Payment, 'id'>): Promise<{ success: boolean; message?: string }> {
+export async function registerPayment(payment: Omit<Payment, 'id'> & { force?: boolean }): Promise<{ success: boolean; message?: string }> {
     // 0. Double Payment Protection (5 min rule)
-    const fiveMinsAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-    const { data: duplicates } = await supabase
-        .from('payments')
-        .select('id')
-        .eq('usuario_id', payment.usuario_id)
-        .eq('total', payment.total)
-        .gte('fecha_pago', fiveMinsAgo);
+    if (!payment.force) {
+        const fiveMinsAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+        const { data: duplicates } = await supabase
+            .from('payments')
+            .select('id')
+            .eq('usuario_id', payment.usuario_id)
+            .eq('total', payment.total)
+            .gte('fecha_pago', fiveMinsAgo);
 
-    if (duplicates && duplicates.length > 0) {
-        // Simple blocking mechanism. In a real app we might ask for "Confirmation", but API returns error here.
-        return { success: false, message: 'DUPLICADO: Ya existe un pago idéntico registrado hace menos de 5 minutos.' };
+        if (duplicates && duplicates.length > 0) {
+            // Updated: Return detailed message
+            return { success: false, message: 'DUPLICADO: Ya existe un pago idéntico registrado para este miembro hace menos de 5 minutos.' };
+        }
     }
 
     // 1. Get Open Shift (Global - specific requirement: Attribute to OPEN shift)
@@ -262,37 +265,11 @@ export async function registerPayment(payment: Omit<Payment, 'id'>): Promise<{ s
                 // Base date is either Now (New) or Expiry (Extension)
                 let baseDate = isExtension && latestSub ? new Date(latestSub.fecha_vencimiento) : now;
 
-                // If plan is monthly (approx 30 days), use Date Logic
-                // If it's a "Day Pass" (1 day), use simple math.
-                // Threshold: Let's apply "Month Logic" for plans >= 28 days.
+                // Use the nominal expiration logic for plans of 28+ days (monthly approx)
                 let newEnd: Date;
-
                 if (plan.duracion_dias >= 28) {
                     const monthsToAdd = Math.round(plan.duracion_dias / 30);
-                    const targetDate = new Date(baseDate);
-                    const originalDay = targetDate.getDate();
-
-                    // Add months safely without overflow first
-                    targetDate.setMonth(targetDate.getMonth() + monthsToAdd);
-
-                    // Check for overflow (e.g. Jan 31 -> Feb 28/March 2)
-                    // If day changed and we are in a different month than expected, went too far.
-                    // Actually JS setMonth(current + 1) moves Jan 31 to March X.
-                    // We want Feb 28 in that case.
-
-                    // Better approach:
-                    const d = new Date(baseDate);
-                    d.setMonth(d.getMonth() + monthsToAdd);
-                    if (d.getDate() !== originalDay) {
-                        // Overflowed! Go back to last day of previous month
-                        d.setDate(0);
-                    }
-
-                    // Now d is "Same Day Next Month" (clamped).
-                    // Subtract 1 Day as per rule "08/07 -> 07/08"
-                    d.setDate(d.getDate() - 1);
-
-                    newEnd = d;
+                    newEnd = calculateNominalExpiration(baseDate, monthsToAdd);
                 } else {
                     // Short term plans - add days
                     newEnd = new Date(baseDate.getTime() + (plan.duracion_dias * 24 * 60 * 60 * 1000));
