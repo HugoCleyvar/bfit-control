@@ -26,9 +26,10 @@ export default function AdminDashboard() {
                 getTodayIncome(),
                 getTodayAttendance()
             ]);
+            const uniqueAllowed = new Set(attendance.filter(a => a.permitido).map(a => a.usuario_id)).size;
             setTotalMembers(activeCount);
             setTodayIncome(income);
-            setTodayAttendance(attendance.length);
+            setTodayAttendance(uniqueAllowed);
             setLoadingKPIs(false);
 
             // Phase 2: Charts (Slow)

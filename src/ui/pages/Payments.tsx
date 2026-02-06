@@ -80,33 +80,43 @@ export default function PaymentsPage() {
 
         const total = Number(amount);
 
-        const result = await registerPayment({
-            total,
-            concepto: mode === 'quick' ? concept : undefined,
-            metodo_pago: method,
-            fecha_pago: new Date().toISOString(),
-            colaborador_id: user.id,
-            turno_id: currentShift?.id,
-            usuario_id: mode === 'membership' ? selectedMemberId : undefined,
-            plan_id: mode === 'membership' ? selectedPlanId : undefined
-        });
+        const register = async (force: boolean = false) => {
+            const result = await registerPayment({
+                total,
+                concepto: mode === 'quick' ? concept : undefined,
+                metodo_pago: method,
+                fecha_pago: new Date().toISOString(),
+                colaborador_id: user.id,
+                turno_id: currentShift?.id,
+                usuario_id: mode === 'membership' ? selectedMemberId : undefined,
+                plan_id: mode === 'membership' ? selectedPlanId : undefined,
+                force: force // We'll add this to the API
+            });
 
-        if (result.success) {
-            if (result.message) {
-                alert('ATENCIÓN: ' + result.message);
+            if (result.success) {
+                if (result.message) {
+                    alert('ATENCIÓN: ' + result.message);
+                } else {
+                    alert('Pago registrado correctamente');
+                }
+
+                setAmount('');
+                setConcept('');
+                setSelectedMemberId('');
+                setSelectedPlanId('');
+                setSelectedProductId('');
+                loadInitialData();
+            } else if (result.message?.includes('DUPLICADO')) {
+                const confirmDouble = window.confirm(result.message + '\n\n¿Deseas registrar este pago DE TODAS FORMAS?');
+                if (confirmDouble) {
+                    await register(true);
+                }
             } else {
-                alert('Pago registrado correctamente');
+                alert('Error: ' + (result.message || 'No se pudo registrar el pago'));
             }
+        };
 
-            setAmount('');
-            setConcept('');
-            setSelectedMemberId('');
-            setSelectedPlanId('');
-            setSelectedProductId('');
-            loadInitialData();
-        } else {
-            alert('Error: ' + (result.message || 'No se pudo registrar el pago'));
-        }
+        await register();
     };
 
     const handlePlanChange = (planId: string) => {

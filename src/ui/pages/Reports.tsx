@@ -142,11 +142,11 @@ function ShiftHistoryTable() {
                         const durationHrs = ((end.getTime() - start.getTime()) / 3600000).toFixed(1);
 
                         // Expected (Total theoretical cash in drawer)
-                        const expected = shift.total_efectivo;
+                        const expected = Number(shift.total_efectivo || 0);
 
                         // Calculate Sales
                         // Sales = Expected (Total Cash in Hand theoretical) - Initial Cash + Withdrawals
-                        const sales = (expected || 0) - (shift.monto_inicial || 0) + (shift.retiros || 0);
+                        const sales = (expected) - Number(shift.monto_inicial || 0) + Number(shift.retiros || 0);
 
                         // Calculated declared from 'desglose_cierre'
                         let declared = 0;
@@ -169,12 +169,12 @@ function ShiftHistoryTable() {
                                 </td>
                                 <td style={{ padding: '12px', fontWeight: 'bold' }}>{shift.profiles?.nombre || 'N/A'}</td>
                                 <td style={{ padding: '12px' }}>{durationHrs} hrs</td>
-                                <td style={{ padding: '12px' }}>${shift.monto_inicial?.toLocaleString()}</td>
+                                <td style={{ padding: '12px' }}>${Number(shift.monto_inicial || 0).toLocaleString()}</td>
                                 <td style={{ padding: '12px', color: 'var(--color-success)' }}>
                                     ${sales.toLocaleString()}
                                 </td>
-                                <td style={{ padding: '12px', color: 'var(--color-danger)' }}>${shift.retiros?.toLocaleString()}</td>
-                                <td style={{ padding: '12px', fontWeight: 'bold' }}>${expected?.toLocaleString()}</td>
+                                <td style={{ padding: '12px', color: 'var(--color-danger)' }}>${Number(shift.retiros || 0).toLocaleString()}</td>
+                                <td style={{ padding: '12px', fontWeight: 'bold' }}>${expected.toLocaleString()}</td>
                                 <td style={{ padding: '12px' }}>${declared.toLocaleString()}</td>
                                 <td style={{ padding: '12px', color: diffColor, fontWeight: 'bold' }}>
                                     {diff > 0 ? '+' : ''}{diff.toLocaleString()}
