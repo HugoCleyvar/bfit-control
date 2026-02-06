@@ -203,10 +203,14 @@ export async function registerPayment(payment: Omit<Payment, 'id'> & { force?: b
     }
 
     // 2. Insert Payment
+    // Destructure force away so it doesn't hit the DB
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { force, ...paymentData } = payment;
+
     const { error: insertError } = await supabase
         .from('payments')
         .insert({
-            ...payment,
+            ...paymentData,
             turno_id: shiftId // Attribute to ANY open shift found
         });
 
