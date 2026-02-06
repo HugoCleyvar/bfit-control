@@ -87,7 +87,7 @@ export default function AdminDashboard() {
                     <h3 style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <TrendingUp size={18} color="var(--color-success)" /> Tendencia de Ingresos (7 Días)
                     </h3>
-                    <div style={{ height: '250px', width: '100%' }}>
+                    <div style={{ height: '250px', width: '100%', minWidth: 0 }}>
                         {loadingCharts ? (
                             <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                 <Loader2 className="animate-spin" />
@@ -120,7 +120,7 @@ export default function AdminDashboard() {
                     <h3 style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <Clock size={18} color="var(--color-info)" /> Horas Pico (Últimos 30 días)
                     </h3>
-                    <div style={{ height: '250px', width: '100%' }}>
+                    <div style={{ height: '250px', width: '100%', minWidth: 0 }}>
                         {loadingCharts ? (
                             <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                 <Loader2 className="animate-spin" />
