@@ -28,7 +28,7 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
     const filteredNavItems = NAV_ITEMS.filter(item => {
         if (isAdmin) return true;
         // Collaborator restricted items
-        const restricted = ['/reports', '/plans', '/settings', '/products'];
+        const restricted = ['/reports', '/plans', '/settings'];
         return !restricted.includes(item.path);
     });
 
