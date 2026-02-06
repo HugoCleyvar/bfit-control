@@ -80,7 +80,7 @@ function App() {
                   </ProtectedRoute>
                 } />
                 <Route path="products" element={
-                  <ProtectedRoute allowedRoles={['admin']}>
+                  <ProtectedRoute allowedRoles={['admin', 'colaborador']}>
                     <Products />
                   </ProtectedRoute>
                 } />
