@@ -134,12 +134,20 @@ function mapMembersWithStatus(data: MemberWithSubscriptions[]): MemberWithStatus
         let daysResult = 0;
 
         if (targetSub) {
-            const dueDate = new Date(targetSub.fecha_vencimiento);
-            const diffTime = dueDate.getTime() - today.getTime();
+            // FIX: Parse date as LOCAL time start of day
+            // "2024-02-06T..." -> "2024-02-06"
+            const dateOnly = targetSub.fecha_vencimiento.split('T')[0];
+            const [y, m, d] = dateOnly.split('-').map(Number);
+
+            // Set to End of Day in Local Time (23:59:59.999)
+            // Month is 0-indexed in JS Date
+            const expirationDate = new Date(y, m - 1, d, 23, 59, 59, 999);
+
+            const diffTime = expirationDate.getTime() - today.getTime();
             daysResult = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-            // CRITICAL: Overwrite DB status if date is past
-            if (daysResult < 0) {
+            // Logic: readable expiration status
+            if (expirationDate < today) {
                 status = 'vencida';
             } else {
                 status = targetSub.estatus;

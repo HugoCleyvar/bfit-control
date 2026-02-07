@@ -83,17 +83,17 @@ export default function AdminDashboard() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: 'var(--spacing-xl)', marginTop: 'var(--spacing-xl)' }}>
 
                 {/* Revenue Chart */}
-                <div style={{ backgroundColor: 'var(--color-card)', padding: 'var(--spacing-xl)', borderRadius: 'var(--radius-lg)', minHeight: '300px', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ backgroundColor: 'var(--color-card)', padding: 'var(--spacing-xl)', borderRadius: 'var(--radius-lg)', minHeight: '300px' }}>
                     <h3 style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <TrendingUp size={18} color="var(--color-success)" /> Tendencia de Ingresos (7 Días)
                     </h3>
-                    <div style={{ flex: 1, width: '100%', minWidth: 0, minHeight: 250 }}>
+                    <div style={{ width: '100%', minWidth: 0 }}>
                         {loadingCharts ? (
-                            <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <div style={{ height: '250px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                 <Loader2 className="animate-spin" />
                             </div>
                         ) : (
-                            <ResponsiveContainer width="100%" height="100%">
+                            <ResponsiveContainer width="100%" aspect={3}>
                                 <AreaChart data={revenueData}>
                                     <defs>
                                         <linearGradient id="colorIncome" x1="0" y1="0" x2="0" y2="1">
@@ -116,17 +116,17 @@ export default function AdminDashboard() {
                 </div>
 
                 {/* Attendance Chart */}
-                <div style={{ backgroundColor: 'var(--color-card)', padding: 'var(--spacing-xl)', borderRadius: 'var(--radius-lg)', minHeight: '300px', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ backgroundColor: 'var(--color-card)', padding: 'var(--spacing-xl)', borderRadius: 'var(--radius-lg)', minHeight: '300px' }}>
                     <h3 style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <Clock size={18} color="var(--color-info)" /> Horas Pico (Últimos 30 días)
                     </h3>
-                    <div style={{ flex: 1, width: '100%', minWidth: 0, minHeight: 250 }}>
+                    <div style={{ width: '100%', minWidth: 0 }}>
                         {loadingCharts ? (
-                            <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <div style={{ height: '250px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                 <Loader2 className="animate-spin" />
                             </div>
                         ) : (
-                            <ResponsiveContainer width="100%" height="100%">
+                            <ResponsiveContainer width="100%" aspect={3}>
                                 <BarChart data={heatmapData}>
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
                                     <XAxis
