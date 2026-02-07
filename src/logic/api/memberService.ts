@@ -149,8 +149,11 @@ function mapMembersWithStatus(data: MemberWithSubscriptions[]): MemberWithStatus
             // Logic: readable expiration status
             if (expirationDate < today) {
                 status = 'vencida';
+            } else if (targetSub.estatus === 'cancelada') {
+                status = 'cancelada';
             } else {
-                status = targetSub.estatus;
+                // Computed active if date is valid (overrides 'vencida' in DB)
+                status = 'activa';
             }
         }
 
