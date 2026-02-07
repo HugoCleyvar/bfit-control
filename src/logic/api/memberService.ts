@@ -121,9 +121,14 @@ function mapMembersWithStatus(data: MemberWithSubscriptions[]): MemberWithStatus
             .sort((a, b) => new Date(b.fecha_vencimiento).getTime() - new Date(a.fecha_vencimiento).getTime());
 
         // First, try to find an active subscription with valid (future) expiration
-        const validActiveSub = subs.find(s =>
-            s.estatus === 'activa' && new Date(s.fecha_vencimiento) > today
-        );
+        const validActiveSub = subs.find(s => {
+            if (s.estatus !== 'activa') return false;
+            // FIX: Parse date consistent with map logic below
+            const dStr = s.fecha_vencimiento.split('T')[0];
+            const [y, m, d] = dStr.split('-').map(Number);
+            const exp = new Date(y, m - 1, d, 23, 59, 59, 999);
+            return exp > today;
+        });
 
         // Fallback to latest subscription regardless of status
         const latestSub = subs[0];
