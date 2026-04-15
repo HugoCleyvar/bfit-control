@@ -32,6 +32,33 @@ export async function getPayments(limit = 50): Promise<PaymentWithDetails[]> {
     return data as PaymentWithDetails[];
 }
 
+export async function getMemberPayments(memberId: string, limit = 5): Promise<PaymentWithDetails[]> {
+    const { data, error } = await supabase
+        .from('payments')
+        .select(`
+            *,
+            member:members (
+                nombre,
+                apellido,
+                telefono
+            ),
+            plan:plans (
+                nombre,
+                duracion_dias
+            )
+        `)
+        .eq('usuario_id', memberId)
+        .order('fecha_pago', { ascending: false })
+        .limit(limit);
+
+    if (error) {
+        console.error('Error getting member payments:', error);
+        return [];
+    }
+    return data as PaymentWithDetails[];
+}
+
+
 export async function getTodayIncome(): Promise<number> {
     const todayStr = new Date().toISOString().split('T')[0];
     const { data, error } = await supabase
