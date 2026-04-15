@@ -189,3 +189,46 @@ export async function getAttendanceHeatmap(): Promise<{ hour: number; count: num
         count
     })).sort((a, b) => a.hour - b.hour);
 }
+
+export async function getDailyAttendanceByShift(days = 7): Promise<{ date: string; matutino: number; vespertino: number }[]> {
+    const today = new Date();
+    const pastDate = new Date(today);
+    pastDate.setDate(today.getDate() - (days - 1));
+    const dateStr = pastDate.toISOString().split('T')[0];
+
+    const { data, error } = await supabase
+        .from('attendance')
+        .select('fecha_hora')
+        .gte('fecha_hora', `${dateStr}T00:00:00`);
+
+    if (error) {
+        console.error('Error fetching attendance by shift:', error);
+        return [];
+    }
+
+    const reportMap: Record<string, { matutino: number; vespertino: number }> = {};
+    for (let i = 0; i < days; i++) {
+        const d = new Date(pastDate);
+        d.setDate(pastDate.getDate() + i);
+        const dateKey = d.toISOString().split('T')[0];
+        reportMap[dateKey] = { matutino: 0, vespertino: 0 };
+    }
+
+    data.forEach((a: { fecha_hora: string }) => {
+        const dateObj = new Date(a.fecha_hora);
+        const dateKey = dateObj.toISOString().split('T')[0];
+        if (reportMap[dateKey]) {
+            if (dateObj.getHours() < 14) {
+                reportMap[dateKey].matutino++;
+            } else {
+                reportMap[dateKey].vespertino++;
+            }
+        }
+    });
+
+    return Object.entries(reportMap).map(([date, counts]) => ({
+        date,
+        matutino: counts.matutino,
+        vespertino: counts.vespertino
+    })).sort((a, b) => a.date.localeCompare(b.date));
+}
