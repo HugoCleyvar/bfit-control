@@ -2,7 +2,8 @@ import { useEffect, useState, useCallback } from 'react';
 import { getPayments } from '../../logic/api/financeService';
 import { getMembers } from '../../logic/api/memberService';
 
-import { BarChart, PieChart, TrendingUp } from 'lucide-react';
+import { BarChart, PieChart, TrendingUp, Users } from 'lucide-react';
+import { BarChart as RechartsBarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 export default function Reports() {
     const [loading, setLoading] = useState(true);
@@ -88,6 +89,11 @@ export default function Reports() {
                 </div>
             </div>
 
+            {/* Accesos Section */}
+            <div style={{ marginTop: 'var(--spacing-xl)' }}>
+                <AttendanceShiftChart />
+            </div>
+
             {/* Shift History Section */}
             <div style={{ marginTop: 'var(--spacing-xl)' }}>
                 <h3>Historial de Cortes de Caja</h3>
@@ -100,6 +106,50 @@ export default function Reports() {
 import type { Shift } from '../../domain/types';
 
 type ShiftHistoryItem = Shift & { profiles?: { nombre: string } };
+
+function AttendanceShiftChart() {
+    const [data, setData] = useState<{ date: string; matutino: number; vespertino: number }[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        import('../../logic/api/attendanceService').then(mod => {
+            mod.getDailyAttendanceByShift(7).then(res => {
+                setData(res);
+                setLoading(false);
+            });
+        });
+    }, []);
+
+    if (loading) return <div>Cargando accesos...</div>;
+
+    const formattedData = data.map(d => ({
+        ...d,
+        // force midday to avoid timezone issues when converting to date string
+        displayDate: new Date(`${d.date}T12:00:00Z`).toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric' })
+    }));
+
+    return (
+        <div style={{ backgroundColor: 'var(--color-card)', padding: 'var(--spacing-xl)', borderRadius: 'var(--radius-lg)', height: '400px' }}>
+            <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: 'var(--spacing-lg)' }}>
+                <Users color="var(--color-primary)" /> Accesos por Turno (Últimos 7 días)
+            </h3>
+            <ResponsiveContainer width="100%" height="85%">
+                <RechartsBarChart data={formattedData}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
+                    <XAxis dataKey="displayDate" stroke="var(--color-text-secondary)" fontSize={12} />
+                    <YAxis stroke="var(--color-text-secondary)" fontSize={12} />
+                    <Tooltip 
+                        contentStyle={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: '8px' }}
+                        itemStyle={{ color: 'var(--color-text)' }}
+                    />
+                    <Legend />
+                    <Bar dataKey="matutino" name="Matutino" fill="var(--color-warning)" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="vespertino" name="Vespertino" fill="var(--color-primary)" radius={[4, 4, 0, 0]} />
+                </RechartsBarChart>
+            </ResponsiveContainer>
+        </div>
+    );
+}
 
 function ShiftHistoryTable() {
     const [history, setHistory] = useState<ShiftHistoryItem[]>([]);
