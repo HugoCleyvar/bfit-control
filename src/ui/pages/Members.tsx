@@ -9,6 +9,8 @@ import { Edit, UserPlus, Trash2, X, Phone, Calendar } from 'lucide-react';
 import { MemberSearch } from '../components/MemberSearch';
 import { MemberForm } from '../components/MemberForm';
 import { getMemberStats } from '../../logic/api/gamificationService';
+import { getMemberPayments } from '../../logic/api/financeService';
+import type { PaymentWithDetails } from '../../logic/api/financeService';
 import { MessageCircle, Trophy, Flame } from 'lucide-react';
 
 interface MemberFormData {
@@ -47,6 +49,49 @@ function Scorecard({ userId }: { userId: string }) {
                 <span>Nivel: <b>{stats.totalVisits > 50 ? 'Elite' : stats.totalVisits > 20 ? 'Pro' : 'Novato'}</b> ({stats.totalVisits} visitas)</span>
             </div>
         </>
+    );
+}
+
+function MemberPaymentHistory({ userId }: { userId: string }) {
+    const [payments, setPayments] = useState<PaymentWithDetails[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        getMemberPayments(userId, 5).then(data => {
+            setPayments(data);
+            setLoading(false);
+        });
+    }, [userId]);
+
+    if (loading) return <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '10px' }}>Cargando pagos...</div>;
+
+    if (payments.length === 0) return <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '10px' }}>No hay pagos registrados.</div>;
+
+    return (
+        <div style={{ marginTop: '16px', width: '100%' }}>
+            <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', color: 'var(--color-text)' }}>Últimos Pagos</h4>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {payments.map(payment => (
+                    <div key={payment.id} style={{
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        padding: '8px 12px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '6px',
+                        border: '1px solid var(--color-border)', fontSize: '13px'
+                    }}>
+                        <div>
+                            <div style={{ fontWeight: 500, color: 'var(--color-text)' }}>
+                                {payment.concepto || payment.plan?.nombre || 'Pago misceláneo'}
+                            </div>
+                            <div style={{ color: 'var(--color-text-secondary)', fontSize: '11px', marginTop: '2px', textTransform: 'capitalize' }}>
+                                {new Date(payment.fecha_pago).toLocaleDateString()} • {payment.metodo_pago}
+                            </div>
+                        </div>
+                        <div style={{ fontWeight: 'bold', color: 'var(--color-success)' }}>
+                            ${payment.total.toFixed(2)}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
     );
 }
 
@@ -327,6 +372,9 @@ export default function Members() {
                             <div style={{ marginTop: '16px', display: 'flex', gap: '15px' }}>
                                 <Scorecard userId={selectedMember.id} />
                             </div>
+
+                            {/* Member Payment History */}
+                            <MemberPaymentHistory userId={selectedMember.id} />
                         </div>
                     </div>
                 </div>
