@@ -1,6 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { getPayments } from '../../logic/api/financeService';
 import { getMembers } from '../../logic/api/memberService';
+import type { Shift } from '../../domain/types';
+import type { DailyReportRow } from '../../logic/api/financeService';
 
 import { BarChart, PieChart, TrendingUp, Users } from 'lucide-react';
 import { BarChart as RechartsBarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from 'recharts';
@@ -108,8 +110,6 @@ export default function Reports() {
         </div>
     );
 }
-
-import type { Shift } from '../../domain/types';
 
 type ShiftHistoryItem = Shift & { profiles?: { nombre: string } };
 
@@ -243,8 +243,6 @@ function ShiftHistoryTable() {
         </div>
     );
 }
-
-import type { DailyReportRow } from '../../logic/api/financeService';
 
 function DailyReportTable() {
     const [data, setData] = useState<DailyReportRow[]>([]);
