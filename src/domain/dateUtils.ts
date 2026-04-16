@@ -9,6 +9,9 @@ export function calculateNominalExpiration(baseDate: Date, monthsToAdd: number):
     let year = baseDate.getFullYear();
     let month = baseDate.getMonth() + monthsToAdd;
     const day = baseDate.getDate();
+    const hours = baseDate.getHours();
+    const minutes = baseDate.getMinutes();
+    const seconds = baseDate.getSeconds();
 
     // 1. Adjust year if month overflows 11
     while (month > 11) {
@@ -24,7 +27,7 @@ export function calculateNominalExpiration(baseDate: Date, monthsToAdd: number):
 
     // 4. Result is targetDay - 1
     // If targetDay is 1, it will correctly go to last day of previous month
-    return new Date(year, month, targetDay - 1);
+    return new Date(year, month, targetDay - 1, hours, minutes, seconds);
 }
 
 /**

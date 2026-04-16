@@ -94,6 +94,12 @@ export default function Reports() {
                 <AttendanceShiftChart />
             </div>
 
+            {/* Daily Summary Section */}
+            <div style={{ marginTop: 'var(--spacing-xl)' }}>
+                <h3>Resumen Diario (Ventas y Asistencia)</h3>
+                <DailyReportTable />
+            </div>
+
             {/* Shift History Section */}
             <div style={{ marginTop: 'var(--spacing-xl)' }}>
                 <h3>Historial de Cortes de Caja</h3>
@@ -228,6 +234,70 @@ function ShiftHistoryTable() {
                                 <td style={{ padding: '12px' }}>${declared.toLocaleString()}</td>
                                 <td style={{ padding: '12px', color: diffColor, fontWeight: 'bold' }}>
                                     {diff > 0 ? '+' : ''}{diff.toLocaleString()}
+                                </td>
+                            </tr>
+                        );
+                    })}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
+import type { DailyReportRow } from '../../logic/api/financeService';
+
+function DailyReportTable() {
+    const [data, setData] = useState<DailyReportRow[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        import('../../logic/api/financeService').then(mod => {
+            mod.getDailyPerformanceSummary(7).then(res => {
+                setData(res);
+                setLoading(false);
+            });
+        });
+    }, []);
+
+    if (loading) return <div>Cargando resumen diario...</div>;
+    if (data.length === 0) return <div style={{ fontStyle: 'italic', color: 'var(--color-text-secondary)' }}>No hay datos disponibles.</div>;
+
+    // Obtener todos los tipos de planes únicos para renderizar las columnas dinámicamente
+    const allPlanNames = Array.from(new Set(data.flatMap(row => Object.keys(row.paymentsByPlan))));
+
+    return (
+        <div style={{ overflowX: 'auto', backgroundColor: 'var(--color-card)', borderRadius: '12px', padding: '10px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '800px', fontSize: '14px' }}>
+                <thead>
+                    <tr style={{ textAlign: 'left', color: 'var(--color-text-secondary)', borderBottom: '1px solid var(--color-border)', backgroundColor: 'rgba(255,255,255,0.02)' }}>
+                        <th style={{ padding: '12px' }}>Día</th>
+                        <th style={{ padding: '12px' }}>Turno Mat.</th>
+                        <th style={{ padding: '12px' }}>Turno Vesp.</th>
+                        <th style={{ padding: '12px', fontWeight: 'bold' }}>Total Asistentes</th>
+                        {allPlanNames.map(planName => (
+                            <th key={planName} style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>
+                                {planName}
+                            </th>
+                        ))}
+                        <th style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>Cortes Entregados</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {data.map(row => {
+                        const displayDate = new Date(`${row.date}T12:00:00Z`).toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short' });
+                        return (
+                            <tr key={row.date} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                <td style={{ padding: '12px', textTransform: 'capitalize' }}>{displayDate}</td>
+                                <td style={{ padding: '12px' }}>{row.attendeesMorning}</td>
+                                <td style={{ padding: '12px' }}>{row.attendeesEvening}</td>
+                                <td style={{ padding: '12px', fontWeight: 'bold' }}>{row.totalAttendees}</td>
+                                {allPlanNames.map(planName => (
+                                    <td key={planName} style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>
+                                        {row.paymentsByPlan[planName] || 0}
+                                    </td>
+                                ))}
+                                <td style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)', color: 'var(--color-success)', fontWeight: 'bold' }}>
+                                    ${row.totalShiftReturns.toLocaleString()}
                                 </td>
                             </tr>
                         );

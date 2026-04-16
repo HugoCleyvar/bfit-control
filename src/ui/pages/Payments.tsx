@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getPayments, registerPayment, type PaymentWithDetails } from '../../logic/api/financeService';
+import { getPayments, registerPayment, deletePaymentAdmin, type PaymentWithDetails } from '../../logic/api/financeService';
 import { getPlans, type Plan } from '../../logic/api/planService';
 import { getProducts, processSaleDeduction, type Product } from '../../logic/api/productService';
 import { useAuth } from '../../logic/authContext';
@@ -7,7 +7,8 @@ import { useShift } from '../../logic/shiftContext';
 import { DataTable } from '../components/DataTable';
 import type { Column } from '../components/DataTable';
 import { MemberSearch } from '../components/MemberSearch';
-import { CreditCard, Banknote, DollarSign, PlusCircle, MessageCircle } from 'lucide-react';
+import { CreditCard, Banknote, DollarSign, PlusCircle, MessageCircle, Trash2 } from 'lucide-react';
+
 
 export default function PaymentsPage() {
     const [payments, setPayments] = useState<PaymentWithDetails[]>([]);
@@ -127,6 +128,21 @@ export default function PaymentsPage() {
         }
     };
 
+    const handleDeletePayment = async (paymentId: string) => {
+        if (!isAdmin) return;
+        if (!window.confirm('¿Estás seguro de ELIMINAR este pago? Esta acción revertirá la vigencia de la membresía o las visitas y descontará el fondo de caja si corresponde.')) {
+            return;
+        }
+        
+        const res = await deletePaymentAdmin(paymentId);
+        if (res.success) {
+            alert(res.message);
+            loadInitialData(); // Refresh list
+        } else {
+            alert('Error: ' + res.message);
+        }
+    };
+
     // Helper function to generate WhatsApp receipt message
     const generateWhatsAppReceipt = (payment: PaymentWithDetails) => {
         if (!payment.member || !payment.plan) return '';
@@ -180,32 +196,54 @@ export default function PaymentsPage() {
             )
         },
         {
-            header: 'Comprobante',
+            header: 'Acciones',
             accessor: (p) => {
                 const whatsappLink = generateWhatsAppReceipt(p);
-                if (!whatsappLink) return <span style={{ color: 'var(--color-text-secondary)', fontSize: '12px' }}>-</span>;
-
                 return (
-                    <a
-                        href={whatsappLink}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            padding: '6px 10px',
-                            backgroundColor: '#25D366',
-                            color: 'white',
-                            borderRadius: '6px',
-                            textDecoration: 'none',
-                            fontSize: '12px',
-                            fontWeight: 500
-                        }}
-                    >
-                        <MessageCircle size={14} />
-                        WhatsApp
-                    </a>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        {whatsappLink ? (
+                            <a
+                                href={whatsappLink}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    padding: '6px 10px',
+                                    backgroundColor: '#25D366',
+                                    color: 'white',
+                                    borderRadius: '6px',
+                                    textDecoration: 'none',
+                                    fontSize: '12px',
+                                    fontWeight: 500
+                                }}
+                            >
+                                <MessageCircle size={14} />
+                                WA
+                            </a>
+                        ) : <span style={{ width: '60px' }}></span>}
+                        
+                        {isAdmin && (
+                            <button
+                                onClick={() => handleDeletePayment(p.id)}
+                                style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    padding: '6px',
+                                    backgroundColor: 'transparent',
+                                    color: 'var(--color-danger)',
+                                    border: '1px solid var(--color-danger)',
+                                    borderRadius: '6px',
+                                    cursor: 'pointer'
+                                }}
+                                title="Eliminar Pago"
+                            >
+                                <Trash2 size={14} />
+                            </button>
+                        )}
+                    </div>
                 );
             }
         },
