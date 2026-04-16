@@ -49,7 +49,7 @@ export function ShiftProvider({ children }: { children: React.ReactNode }) {
         fetchOpenShift();
     }, [fetchOpenShift]);
 
-    const openShift = async (initialAmount: number) => {
+    const openShift = async (initialAmount: number, breakdown?: CashCount) => {
         if (!user) return { success: false, error: 'No user' };
 
         try {
