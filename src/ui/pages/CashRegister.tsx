@@ -43,8 +43,8 @@ export default function CashRegister() {
 
     const handleOpenShift = async () => {
         if (openCashTotal < 0) return;
-        const success = await openShift(openCashTotal, openCashCount);
-        if (!success) {
+        const result = await openShift(openCashTotal, openCashCount);
+        if (!result.success) {
             alert('Error al abrir turno');
         } else {
             setOpenCashTotal(0);
