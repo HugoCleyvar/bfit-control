@@ -208,7 +208,7 @@ function ShiftHistoryTable() {
                         let declared = 0;
                         if (shift.desglose_cierre) {
                             try {
-                                const counts = typeof shift.desglose_cierre === 'string' ? JSON.parse(shift.desglose_cierre) : shift.desglose_cierre;
+                                const counts = typeof (shift.desglose_cierre as any) === 'string' ? JSON.parse((shift.desglose_cierre as any)) : shift.desglose_cierre;
                                 declared = Object.entries(counts).reduce((acc, [denom, qty]) => acc + (Number(denom) * (qty as number)), 0);
                             } catch (e) {
                                 console.error('Error parsing cash count', e);
