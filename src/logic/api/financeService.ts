@@ -410,3 +410,172 @@ export async function getWeeklyRevenue(): Promise<{ date: string; total: number 
         total
     }));
 }
+
+export async function deletePaymentAdmin(paymentId: string): Promise<{ success: boolean; message?: string }> {
+    // 1. Fetch the payment
+    const { data: payment } = await supabase.from('payments').select('*').eq('id', paymentId).single();
+    if (!payment) return { success: false, message: 'Pago no encontrado.' };
+
+    // 2. Fetch the plan
+    if (payment.plan_id && payment.usuario_id) {
+        const { data: plan } = await supabase.from('plans').select('*').eq('id', payment.plan_id).single();
+        if (plan) {
+            const normName = plan.nombre.toLowerCase();
+            // Revert tickets
+            if (normName.includes('visita') || normName.includes('paquete')) {
+                let ticketsToSub = 1;
+                const match = normName.match(/(\d+)\s*visita/);
+                if (match) {
+                    ticketsToSub = parseInt(match[1]);
+                }
+                if (ticketsToSub > 0) {
+                    const { data: member } = await supabase.from('members').select('visitas_disponibles').eq('id', payment.usuario_id).single();
+                    const newCount = Math.max(0, (member?.visitas_disponibles || 0) - ticketsToSub);
+                    await supabase.from('members').update({ visitas_disponibles: newCount }).eq('id', payment.usuario_id);
+                }
+            } else {
+                // Revert date
+                const { data: subs } = await supabase
+                    .from('subscriptions')
+                    .select('*')
+                    .eq('usuario_id', payment.usuario_id)
+                    .order('fecha_vencimiento', { ascending: false })
+                    .limit(1);
+
+                const latestSub = subs?.[0];
+                if (latestSub) {
+                    let oldEnd = new Date(latestSub.fecha_vencimiento);
+                    if (plan.duracion_dias >= 28) {
+                        const monthsToSub = Math.round(plan.duracion_dias / 30);
+                        let year = oldEnd.getFullYear();
+                        let month = oldEnd.getMonth() - monthsToSub;
+                        while (month < 0) {
+                            year--;
+                            month += 12;
+                        }
+                        oldEnd.setFullYear(year);
+                        oldEnd.setMonth(month);
+                    } else {
+                        oldEnd = new Date(oldEnd.getTime() - (plan.duracion_dias * 24 * 60 * 60 * 1000));
+                    }
+                    await supabase.from('subscriptions').update({ fecha_vencimiento: oldEnd.toISOString() }).eq('id', latestSub.id);
+                }
+            }
+        }
+    }
+
+    // 3. Subtract from open shift if it matches the current shift
+    if (payment.turno_id && payment.metodo_pago === 'efectivo') {
+        const currentShift = await getCurrentShift();
+        if (currentShift && currentShift.id === payment.turno_id) {
+            const newTotal = Math.max(0, (currentShift.total_efectivo || 0) - payment.total);
+            await supabase.from('shifts').update({ total_efectivo: newTotal }).eq('id', payment.turno_id);
+        }
+    }
+
+    // 4. Delete the payment
+    const { error: delError } = await supabase.from('payments').delete().eq('id', paymentId);
+    if (delError) return { success: false, message: 'Error eliminando el registro de pago.' };
+
+    return { success: true, message: 'Pago eliminado y vigencia/visitas revertida correctamente.' };
+}
+
+export interface DailyReportRow {
+    date: string;
+    attendeesMorning: number;
+    attendeesEvening: number;
+    totalAttendees: number;
+    paymentsByPlan: Record<string, number>;
+    totalShiftReturns: number; // total handed over to admin from closed shifts
+}
+
+export async function getDailyPerformanceSummary(days = 7): Promise<DailyReportRow[]> {
+    const today = new Date();
+    const startDate = new Date(today);
+    startDate.setDate(today.getDate() - (days - 1));
+    const startStr = startDate.toISOString().split('T')[0];
+
+    // Fetch Attendance
+    const { data: attendanceData } = await supabase
+        .from('attendance')
+        .select('fecha_hora')
+        .gte('fecha_hora', `${startStr}T00:00:00`);
+
+    // Fetch Payments with Plans to group by membership type
+    const { data: paymentData } = await supabase
+        .from('payments')
+        .select(`
+            fecha_pago, 
+            plan:plans(nombre)
+        `)
+        .gte('fecha_pago', `${startStr}T00:00:00`);
+
+    // Fetch Shifts to get closed cash differences (Corte entregado)
+    const { data: shiftData } = await supabase
+        .from('shifts')
+        .select('hora_cierre, total_efectivo, desglose_cierre, fondo_siguiente_turno')
+        .eq('estatus', 'cerrado')
+        .gte('hora_cierre', `${startStr}T00:00:00`);
+
+    const reportMap: Record<string, DailyReportRow> = {};
+
+    for (let i = 0; i < days; i++) {
+        const d = new Date(startDate);
+        d.setDate(startDate.getDate() + i);
+        const dateKey = d.toISOString().split('T')[0];
+        reportMap[dateKey] = {
+            date: dateKey,
+            attendeesMorning: 0,
+            attendeesEvening: 0,
+            totalAttendees: 0,
+            paymentsByPlan: {},
+            totalShiftReturns: 0
+        };
+    }
+
+    // Aggregate Attendance
+    (attendanceData || []).forEach((a: any) => {
+        const d = new Date(a.fecha_hora);
+        const dateKey = d.toISOString().split('T')[0];
+        if (reportMap[dateKey]) {
+            reportMap[dateKey].totalAttendees++;
+            if (d.getHours() < 14) {
+                reportMap[dateKey].attendeesMorning++;
+            } else {
+                reportMap[dateKey].attendeesEvening++;
+            }
+        }
+    });
+
+    // Aggregate Payments
+    (paymentData || []).forEach((p: any) => {
+        const d = new Date(p.fecha_pago);
+        const dateKey = d.toISOString().split('T')[0];
+        if (reportMap[dateKey]) {
+            const planName = p.plan?.nombre || 'Desconocido';
+            reportMap[dateKey].paymentsByPlan[planName] = (reportMap[dateKey].paymentsByPlan[planName] || 0) + 1;
+        }
+    });
+
+    // Aggregate Shift Cut (Corte de caja)
+    (shiftData || []).forEach((s: any) => {
+        if (!s.hora_cierre) return;
+        const d = new Date(s.hora_cierre);
+        const dateKey = d.toISOString().split('T')[0];
+        if (reportMap[dateKey]) {
+            // "Corte" = Cash Count Total (or total_efectivo if JSON not used) - Fondo para el siguiente
+            // Default logic: Cash handed over to Admin 
+            let collectedInDrawer = s.total_efectivo || 0;
+            if (s.desglose_cierre && typeof s.desglose_cierre === 'object' && 'total' in s.desglose_cierre) {
+                // If the user actually verified cash into `desglose_cierre.total`
+                collectedInDrawer = (s.desglose_cierre as any).total;
+            }
+            const leftInDrawer = s.fondo_siguiente_turno ? Number(s.fondo_siguiente_turno) : 0;
+            const handedToAdmin = Math.max(0, collectedInDrawer - leftInDrawer);
+            
+            reportMap[dateKey].totalShiftReturns += handedToAdmin;
+        }
+    });
+
+    return Object.values(reportMap).sort((a, b) => b.date.localeCompare(a.date));
+}

@@ -6,8 +6,8 @@ import type { Shift, CashCount } from '../domain/types';
 interface ShiftContextType {
     currentShift: Shift | null;
     isLoadingShift: boolean;
-    openShift: (initialAmount: number) => Promise<{ success: boolean; error?: unknown }>;
-    closeShift: (cashCount: CashCount, totalDeclared: number) => Promise<{ success: boolean; difference?: number; error?: unknown }>;
+    openShift: (initialAmount: number, breakdown?: CashCount) => Promise<{ success: boolean; error?: unknown }>;
+    closeShift: (cashCount: CashCount, totalDeclared: number, nextFundCashCount?: CashCount, nextFundTotal?: number) => Promise<{ success: boolean; difference?: number; error?: unknown }>;
     refreshShift: () => Promise<void>;
 }
 
@@ -58,6 +58,7 @@ export function ShiftProvider({ children }: { children: React.ReactNode }) {
                 .insert({
                     colaborador_id: user.id,
                     monto_inicial: initialAmount,
+                    desglose_apertura: breakdown,
                     // 'hora_inicio' matches DB schema
                     hora_inicio: new Date().toISOString(),
                     estatus: 'abierto',
@@ -77,7 +78,7 @@ export function ShiftProvider({ children }: { children: React.ReactNode }) {
         }
     };
 
-    const closeShift = async (cashCount: CashCount, totalDeclared: number) => {
+        const closeShift = async (cashCount: CashCount, totalDeclared: number, nextFundCashCount?: CashCount, nextFundTotal?: number) => {
         if (!currentShift) return { success: false, error: 'No active shift' };
 
         try {
@@ -89,7 +90,9 @@ export function ShiftProvider({ children }: { children: React.ReactNode }) {
                     estatus: 'cerrado',
                     hora_cierre: new Date().toISOString(),
                     total_efectivo: totalDeclared,
-                    desglose_cierre: cashCount // Store breakdown
+                    desglose_cierre: cashCount, // Store breakdown
+                    fondo_siguiente_turno: nextFundTotal,
+                    desglose_fondo_siguiente: nextFundCashCount
                 })
                 .eq('id', currentShift.id);
 
