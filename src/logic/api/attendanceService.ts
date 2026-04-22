@@ -210,13 +210,20 @@ export async function getDailyAttendanceByShift(days = 7): Promise<{ date: strin
     for (let i = 0; i < days; i++) {
         const d = new Date(pastDate);
         d.setDate(pastDate.getDate() + i);
-        const dateKey = d.toISOString().split('T')[0];
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        const dateKey = `${y}-${m}-${day}`;
         reportMap[dateKey] = { matutino: 0, vespertino: 0 };
     }
 
     data.forEach((a: { fecha_hora: string }) => {
         const dateObj = new Date(a.fecha_hora);
-        const dateKey = dateObj.toISOString().split('T')[0];
+        const y = dateObj.getFullYear();
+        const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+        const day = String(dateObj.getDate()).padStart(2, '0');
+        const dateKey = `${y}-${m}-${day}`;
+        
         if (reportMap[dateKey]) {
             if (dateObj.getHours() < 14) {
                 reportMap[dateKey].matutino++;

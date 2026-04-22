@@ -7,7 +7,7 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-interface Member {
+export interface Member {
     id: string;
     nombre: string;
     apellido: string;
@@ -21,7 +21,7 @@ interface Member {
     subscriptions?: any[];
 }
 
-async function findMemberForCheckIn(query: string): Promise<any | null> {
+export async function findMemberForCheckIn(query: string): Promise<any | null> {
     // 1. Try by ID (exact match)
     const { data: byId } = await supabase
         .from('members')
@@ -56,7 +56,6 @@ function mapMember(member: any) {
     const targetSub = validActiveSub || latestSub;
 
     let status = 'sin_suscripcion';
-    let daysResult = 0;
 
     if (targetSub) {
         // MATCHING THE FIX WE JUST APPLIED
@@ -106,7 +105,7 @@ async function debugUser() {
     if (!searchResults || searchResults.length === 0) {
         console.log("❌ No members found with name containing 'Gibran'");
         // Debug: List all members (limit 5) to verify connection
-        const { data: allMembers, error } = await supabase.from('members').select('id, nombre, apellido').limit(5);
+        const { data: allMembers } = await supabase.from('members').select('id, nombre, apellido').limit(5);
         console.log("DB Sample:", allMembers?.map(m => `${m.nombre} ${m.apellido}`));
         return;
     }
