@@ -522,7 +522,10 @@ export async function getDailyPerformanceSummary(days = 7): Promise<DailyReportR
     for (let i = 0; i < days; i++) {
         const d = new Date(startDate);
         d.setDate(startDate.getDate() + i);
-        const dateKey = d.toISOString().split('T')[0];
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        const dateKey = `${y}-${m}-${day}`;
         reportMap[dateKey] = {
             date: dateKey,
             attendeesMorning: 0,
@@ -536,7 +539,10 @@ export async function getDailyPerformanceSummary(days = 7): Promise<DailyReportR
     // Aggregate Attendance
     (attendanceData || []).forEach((a: any) => {
         const d = new Date(a.fecha_hora);
-        const dateKey = d.toISOString().split('T')[0];
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        const dateKey = `${y}-${m}-${day}`;
         if (reportMap[dateKey]) {
             reportMap[dateKey].totalAttendees++;
             if (d.getHours() < 14) {
@@ -550,9 +556,12 @@ export async function getDailyPerformanceSummary(days = 7): Promise<DailyReportR
     // Aggregate Payments
     (paymentData || []).forEach((p: any) => {
         const d = new Date(p.fecha_pago);
-        const dateKey = d.toISOString().split('T')[0];
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        const dateKey = `${y}-${m}-${day}`;
         if (reportMap[dateKey]) {
-            const planName = p.plan?.nombre || 'Desconocido';
+            const planName = p.plan?.nombre || 'Productos';
             reportMap[dateKey].paymentsByPlan[planName] = (reportMap[dateKey].paymentsByPlan[planName] || 0) + 1;
         }
     });
@@ -561,13 +570,13 @@ export async function getDailyPerformanceSummary(days = 7): Promise<DailyReportR
     (shiftData || []).forEach((s: any) => {
         if (!s.hora_cierre) return;
         const d = new Date(s.hora_cierre);
-        const dateKey = d.toISOString().split('T')[0];
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        const dateKey = `${y}-${m}-${day}`;
         if (reportMap[dateKey]) {
-            // "Corte" = Cash Count Total (or total_efectivo if JSON not used) - Fondo para el siguiente
-            // Default logic: Cash handed over to Admin 
             let collectedInDrawer = s.total_efectivo || 0;
             if (s.desglose_cierre && typeof s.desglose_cierre === 'object' && 'total' in s.desglose_cierre) {
-                // If the user actually verified cash into `desglose_cierre.total`
                 collectedInDrawer = (s.desglose_cierre as any).total;
             }
             const leftInDrawer = s.fondo_siguiente_turno ? Number(s.fondo_siguiente_turno) : 0;
@@ -578,4 +587,109 @@ export async function getDailyPerformanceSummary(days = 7): Promise<DailyReportR
     });
 
     return Object.values(reportMap).sort((a, b) => b.date.localeCompare(a.date));
+}
+
+export interface MonthlyReportRow {
+    monthStr: string; // YYYY-MM
+    attendeesMorning: number;
+    attendeesEvening: number;
+    totalAttendees: number;
+    paymentsByPlan: Record<string, number>;
+    totalShiftReturns: number;
+}
+
+export async function getMonthlyPerformanceSummary(months = 6): Promise<MonthlyReportRow[]> {
+    const today = new Date();
+    // Start date N months ago (1st day of the month)
+    const startDate = new Date(today.getFullYear(), today.getMonth() - (months - 1), 1);
+    const startStr = startDate.toISOString().split('T')[0];
+
+    // Fetch Attendance
+    const { data: attendanceData } = await supabase
+        .from('attendance')
+        .select('fecha_hora')
+        .gte('fecha_hora', `${startStr}T00:00:00`);
+
+    // Fetch Payments with Plans to group by membership type
+    const { data: paymentData } = await supabase
+        .from('payments')
+        .select(`
+            fecha_pago, 
+            plan:plans(nombre)
+        `)
+        .gte('fecha_pago', `${startStr}T00:00:00`);
+
+    // Fetch Shifts to get closed cash differences
+    const { data: shiftData } = await supabase
+        .from('shifts')
+        .select('hora_cierre, total_efectivo, desglose_cierre, fondo_siguiente_turno')
+        .eq('estatus', 'cerrado')
+        .gte('hora_cierre', `${startStr}T00:00:00`);
+
+    const reportMap: Record<string, MonthlyReportRow> = {};
+
+    for (let i = 0; i < months; i++) {
+        const d = new Date(startDate.getFullYear(), startDate.getMonth() + i, 1);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const monthKey = `${y}-${m}`;
+        reportMap[monthKey] = {
+            monthStr: monthKey,
+            attendeesMorning: 0,
+            attendeesEvening: 0,
+            totalAttendees: 0,
+            paymentsByPlan: {},
+            totalShiftReturns: 0
+        };
+    }
+
+    // Aggregate Attendance
+    (attendanceData || []).forEach((a: any) => {
+        const d = new Date(a.fecha_hora);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const monthKey = `${y}-${m}`;
+        if (reportMap[monthKey]) {
+            reportMap[monthKey].totalAttendees++;
+            if (d.getHours() < 14) {
+                reportMap[monthKey].attendeesMorning++;
+            } else {
+                reportMap[monthKey].attendeesEvening++;
+            }
+        }
+    });
+
+    // Aggregate Payments
+    (paymentData || []).forEach((p: any) => {
+        const d = new Date(p.fecha_pago);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const monthKey = `${y}-${m}`;
+        if (reportMap[monthKey]) {
+            const planName = p.plan?.nombre || 'Productos';
+            reportMap[monthKey].paymentsByPlan[planName] = (reportMap[monthKey].paymentsByPlan[planName] || 0) + 1;
+        }
+    });
+
+    // Aggregate Shift Cut (Corte de caja)
+    (shiftData || []).forEach((s: any) => {
+        if (!s.hora_cierre) return;
+        const d = new Date(s.hora_cierre);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const monthKey = `${y}-${m}`;
+        if (reportMap[monthKey]) {
+            let collectedInDrawer = s.total_efectivo || 0;
+            if (s.desglose_cierre && typeof s.desglose_cierre === 'object' && 'total' in s.desglose_cierre) {
+                collectedInDrawer = (s.desglose_cierre as any).total;
+            }
+            const leftInDrawer = s.fondo_siguiente_turno ? Number(s.fondo_siguiente_turno) : 0;
+            const handedToAdmin = Math.max(0, collectedInDrawer - leftInDrawer);
+            
+            reportMap[monthKey].totalShiftReturns += handedToAdmin;
+        }
+    });
+
+    // Sort descending by month
+    return Object.values(reportMap).sort((a, b) => b.monthStr.localeCompare(a.monthStr));
 }
