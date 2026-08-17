@@ -1,10 +1,15 @@
 import { useEffect, useState, useCallback } from 'react';
-import { getIncomeSummary } from '../../logic/api/financeService';
+import { getIncomeSummary, getShiftHistory, getDailyPerformanceSummary, getMonthlyPerformanceSummary } from '../../logic/api/financeService';
 import { getActiveMemberCount } from '../../logic/api/memberService';
+import { getDailyAttendanceByShift } from '../../logic/api/attendanceService';
 import type { DailyReportRow, MonthlyReportRow, ShiftHistoryRow } from '../../logic/api/financeService';
 
 import { BarChart, PieChart, TrendingUp, Users } from 'lucide-react';
 import { BarChart as RechartsBarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from 'recharts';
+
+function formatMoney(amount: number): string {
+    return amount.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
 
 export default function Reports() {
     const [loading, setLoading] = useState(true);
@@ -44,7 +49,7 @@ export default function Reports() {
                         <TrendingUp color="var(--color-success)" /> Ingresos Totales
                     </h3>
                     <div style={{ fontSize: '32px', fontWeight: 'bold' }}>
-                        ${totalIncome.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                        ${formatMoney(totalIncome)}
                     </div>
                     <p style={{ color: 'var(--color-text-secondary)', marginTop: '8px' }}>
                         Histórico acumulado
@@ -60,7 +65,7 @@ export default function Reports() {
                         {Object.entries(paymentMethods).map(([method, amount]) => (
                             <div key={method} style={{ display: 'flex', justifyContent: 'space-between' }}>
                                 <span style={{ textTransform: 'capitalize' }}>{method}</span>
-                                <b>${amount.toLocaleString()}</b>
+                                <b>${formatMoney(amount)}</b>
                             </div>
                         ))}
                     </div>
@@ -111,11 +116,9 @@ function AttendanceShiftChart() {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        import('../../logic/api/attendanceService').then(mod => {
-            mod.getDailyAttendanceByShift(7).then(res => {
-                setData(res);
-                setLoading(false);
-            });
+        getDailyAttendanceByShift(7).then(res => {
+            setData(res);
+            setLoading(false);
         });
     }, []);
 
@@ -155,13 +158,9 @@ function ShiftHistoryTable() {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        // Dynamic import to avoid circular dep issues in some bundlers if logic grows,
-        // though here it's fine. keeping pattern consistent.
-        import('../../logic/api/financeService').then(mod => {
-            mod.getShiftHistory().then(data => {
-                setHistory(data);
-                setLoading(false);
-            });
+        getShiftHistory().then(data => {
+            setHistory(data);
+            setLoading(false);
         });
     }, []);
 
@@ -219,15 +218,15 @@ function ShiftHistoryTable() {
                                 </td>
                                 <td style={{ padding: '12px', fontWeight: 'bold' }}>{shift.profiles?.nombre || 'N/A'}</td>
                                 <td style={{ padding: '12px' }}>{durationHrs} hrs</td>
-                                <td style={{ padding: '12px' }}>${Number(shift.monto_inicial || 0).toLocaleString()}</td>
+                                <td style={{ padding: '12px' }}>${formatMoney(Number(shift.monto_inicial || 0))}</td>
                                 <td style={{ padding: '12px', color: 'var(--color-success)' }}>
-                                    ${sales.toLocaleString()}
+                                    ${formatMoney(sales)}
                                 </td>
-                                <td style={{ padding: '12px', color: 'var(--color-danger)' }}>${Number(shift.retiros || 0).toLocaleString()}</td>
-                                <td style={{ padding: '12px', fontWeight: 'bold' }}>${expected.toLocaleString()}</td>
-                                <td style={{ padding: '12px' }}>${declared.toLocaleString()}</td>
+                                <td style={{ padding: '12px', color: 'var(--color-danger)' }}>${formatMoney(Number(shift.retiros || 0))}</td>
+                                <td style={{ padding: '12px', fontWeight: 'bold' }}>${formatMoney(expected)}</td>
+                                <td style={{ padding: '12px' }}>${formatMoney(declared)}</td>
                                 <td style={{ padding: '12px', color: diffColor, fontWeight: 'bold' }}>
-                                    {diff > 0 ? '+' : ''}{diff.toLocaleString()}
+                                    {diff > 0 ? '+' : ''}${formatMoney(diff)}
                                 </td>
                             </tr>
                         );
@@ -243,11 +242,9 @@ function DailyReportTable() {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        import('../../logic/api/financeService').then(mod => {
-            mod.getDailyPerformanceSummary(7).then(res => {
-                setData(res);
-                setLoading(false);
-            });
+        getDailyPerformanceSummary(7).then(res => {
+            setData(res);
+            setLoading(false);
         });
     }, []);
 
@@ -259,6 +256,9 @@ function DailyReportTable() {
 
     return (
         <div style={{ overflowX: 'auto', backgroundColor: 'var(--color-card)', borderRadius: '12px', padding: '10px' }}>
+            <p style={{ padding: '0 12px', margin: '4px 0 10px', fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                Las columnas de plan muestran <b>número de pagos</b>, no montos — solo "Cortes Entregados" es dinero.
+            </p>
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '800px', fontSize: '14px' }}>
                 <thead>
                     <tr style={{ textAlign: 'left', color: 'var(--color-text-secondary)', borderBottom: '1px solid var(--color-border)', backgroundColor: 'rgba(255,255,255,0.02)' }}>
@@ -268,7 +268,7 @@ function DailyReportTable() {
                         <th style={{ padding: '12px', fontWeight: 'bold' }}>Total Asistentes</th>
                         {allPlanNames.map(planName => (
                             <th key={planName} style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>
-                                {planName}
+                                {planName} (pagos)
                             </th>
                         ))}
                         <th style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>Cortes Entregados</th>
@@ -289,7 +289,7 @@ function DailyReportTable() {
                                     </td>
                                 ))}
                                 <td style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)', color: 'var(--color-success)', fontWeight: 'bold' }}>
-                                    ${row.totalShiftReturns.toLocaleString()}
+                                    ${formatMoney(row.totalShiftReturns)}
                                 </td>
                             </tr>
                         );
@@ -305,11 +305,9 @@ function MonthlyReportTable() {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        import('../../logic/api/financeService').then(mod => {
-            mod.getMonthlyPerformanceSummary(6).then(res => {
-                setData(res);
-                setLoading(false);
-            });
+        getMonthlyPerformanceSummary(6).then(res => {
+            setData(res);
+            setLoading(false);
         });
     }, []);
 
@@ -321,6 +319,9 @@ function MonthlyReportTable() {
 
     return (
         <div style={{ overflowX: 'auto', backgroundColor: 'var(--color-card)', borderRadius: '12px', padding: '10px' }}>
+            <p style={{ padding: '0 12px', margin: '4px 0 10px', fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                Las columnas de plan muestran <b>número de pagos</b>, no montos — solo "Cortes Entregados" es dinero.
+            </p>
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '800px', fontSize: '14px' }}>
                 <thead>
                     <tr style={{ textAlign: 'left', color: 'var(--color-text-secondary)', borderBottom: '1px solid var(--color-border)', backgroundColor: 'rgba(255,255,255,0.02)' }}>
@@ -330,7 +331,7 @@ function MonthlyReportTable() {
                         <th style={{ padding: '12px', fontWeight: 'bold' }}>Total Asistentes</th>
                         {allPlanNames.map(planName => (
                             <th key={planName} style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>
-                                {planName}
+                                {planName} (pagos)
                             </th>
                         ))}
                         <th style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>Cortes Entregados</th>
@@ -353,7 +354,7 @@ function MonthlyReportTable() {
                                     </td>
                                 ))}
                                 <td style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)', color: 'var(--color-success)', fontWeight: 'bold' }}>
-                                    ${row.totalShiftReturns.toLocaleString()}
+                                    ${formatMoney(row.totalShiftReturns)}
                                 </td>
                             </tr>
                         );

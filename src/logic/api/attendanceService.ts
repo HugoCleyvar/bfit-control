@@ -192,14 +192,16 @@ export async function getAttendanceHeatmap(): Promise<{ hour: number; count: num
 
 export async function getDailyAttendanceByShift(days = 7): Promise<{ date: string; matutino: number; vespertino: number }[]> {
     const today = new Date();
-    const pastDate = new Date(today);
-    pastDate.setDate(today.getDate() - (days - 1));
-    const dateStr = pastDate.toISOString().split('T')[0];
+    // Anchor at local midnight (not "now"'s time-of-day) so the UTC instant sent to the
+    // query lines up with the local-time bucketing below. Building it from a snapshot of
+    // "now" and converting via toISOString() could roll the date forward in UTC terms
+    // (e.g. evening hours in UTC-6), silently dropping the oldest day of the window.
+    const pastDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() - (days - 1));
 
     const { data, error } = await supabase
         .from('attendance')
         .select('fecha_hora')
-        .gte('fecha_hora', `${dateStr}T00:00:00`);
+        .gte('fecha_hora', pastDate.toISOString());
 
     if (error) {
         console.error('Error fetching attendance by shift:', error);
