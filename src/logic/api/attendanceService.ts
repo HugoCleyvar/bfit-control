@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase, fetchAllRows } from './supabase';
 import type { Attendance } from '../../domain/types';
 import { findMemberForCheckIn } from './memberService';
 import { startOfLocalDay } from '../../domain/dateUtils';
@@ -192,16 +192,16 @@ export async function getAttendanceHeatmap(): Promise<{ hour: number; count: num
 }
 
 export async function getDailyAttendanceByShift(from: Date, to: Date): Promise<{ date: string; matutino: number; vespertino: number }[]> {
-    const { data, error } = await supabase
-        .from('attendance')
-        .select('fecha_hora')
-        .gte('fecha_hora', from.toISOString())
-        .lte('fecha_hora', to.toISOString());
-
-    if (error) {
-        console.error('Error fetching attendance by shift:', error);
-        return [];
-    }
+    // Paginated - without .range(), Supabase silently caps at its default row limit with no
+    // guaranteed order, which can drop entire recent days from a busy gym's report.
+    const data = await fetchAllRows<{ fecha_hora: string }>((rangeFrom, rangeTo) =>
+        supabase
+            .from('attendance')
+            .select('fecha_hora')
+            .gte('fecha_hora', from.toISOString())
+            .lte('fecha_hora', to.toISOString())
+            .range(rangeFrom, rangeTo)
+    );
 
     const start = startOfLocalDay(from);
     const dayCount = Math.round((startOfLocalDay(to).getTime() - start.getTime()) / 86400000) + 1;
