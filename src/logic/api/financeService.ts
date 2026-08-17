@@ -1,31 +1,6 @@
-import { supabase } from './supabase';
+import { supabase, fetchAllRows } from './supabase';
 import type { Payment, Shift, Expense } from '../../domain/types';
 import { calculateNominalExpiration, startOfLocalDay } from '../../domain/dateUtils';
-
-// Supabase/PostgREST caps any unranged .select() at a server-configured row limit
-// (1000 by default). Report aggregates need every row, so this pages through with
-// .range() until an empty page comes back, instead of trusting a single request.
-async function fetchAllRows<T>(
-    build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>
-): Promise<T[]> {
-    const pageSize = 1000;
-    let offset = 0;
-    const rows: T[] = [];
-
-    while (true) {
-        const { data, error } = await build(offset, offset + pageSize - 1);
-        if (error) {
-            console.error('Error paginating rows:', error);
-            break;
-        }
-        if (!data || data.length === 0) break;
-
-        rows.push(...data);
-        offset += data.length;
-    }
-
-    return rows;
-}
 
 export interface PaymentWithDetails extends Payment {
     member?: { nombre: string; apellido: string; telefono?: string };
@@ -649,7 +624,9 @@ export interface MonthlyReportRow {
     attendeesMorning: number;
     attendeesEvening: number;
     totalAttendees: number;
-    paymentsByPlan: Record<string, number>;
+    paymentsByPlan: Record<string, number>; // count of payments per plan
+    revenueByPlan: Record<string, number>; // $ revenue per plan - pure sum of payments.total, never net of expenses/retiros
+    totalRevenue: number;
     totalShiftReturns: number;
 }
 
@@ -670,6 +647,7 @@ export async function getMonthlyPerformanceSummary(months = 6): Promise<MonthlyR
         .from('payments')
         .select(`
             fecha_pago,
+            total,
             plan:plans(nombre)
         `)
         .gte('fecha_pago', startBoundary);
@@ -694,6 +672,8 @@ export async function getMonthlyPerformanceSummary(months = 6): Promise<MonthlyR
             attendeesEvening: 0,
             totalAttendees: 0,
             paymentsByPlan: {},
+            revenueByPlan: {},
+            totalRevenue: 0,
             totalShiftReturns: 0
         };
     }
@@ -714,7 +694,8 @@ export async function getMonthlyPerformanceSummary(months = 6): Promise<MonthlyR
         }
     });
 
-    // Aggregate Payments
+    // Aggregate Payments (count AND revenue per plan - revenue is a pure sum of payments.total,
+    // it never touches expenses/retiros, so cash withdrawals during a shift don't affect it)
     (paymentData || []).forEach((p: any) => {
         const d = new Date(p.fecha_pago);
         const y = d.getFullYear();
@@ -723,6 +704,8 @@ export async function getMonthlyPerformanceSummary(months = 6): Promise<MonthlyR
         if (reportMap[monthKey]) {
             const planName = p.plan?.nombre || 'Productos';
             reportMap[monthKey].paymentsByPlan[planName] = (reportMap[monthKey].paymentsByPlan[planName] || 0) + 1;
+            reportMap[monthKey].revenueByPlan[planName] = (reportMap[monthKey].revenueByPlan[planName] || 0) + p.total;
+            reportMap[monthKey].totalRevenue += p.total;
         }
     });
 
@@ -739,11 +722,53 @@ export async function getMonthlyPerformanceSummary(months = 6): Promise<MonthlyR
             const collectedInDrawer = s.total_efectivo || 0;
             const leftInDrawer = s.fondo_siguiente_turno ? Number(s.fondo_siguiente_turno) : 0;
             const handedToAdmin = Math.max(0, collectedInDrawer - leftInDrawer);
-            
+
             reportMap[monthKey].totalShiftReturns += handedToAdmin;
         }
     });
 
     // Sort descending by month
     return Object.values(reportMap).sort((a, b) => b.monthStr.localeCompare(a.monthStr));
+}
+
+export interface CollaboratorSales {
+    colaboradorId: string;
+    nombre: string;
+    totalVentas: number;
+    numPagos: number;
+}
+
+// Sales per collaborator for a period - pure sum of payments.total per colaborador_id,
+// same "never net against expenses" rule as the rest of the income reports.
+export async function getSalesByCollaborator(from: Date, to: Date): Promise<CollaboratorSales[]> {
+    const [payments, { data: profiles }] = await Promise.all([
+        fetchAllRows<{ colaborador_id: string | null; total: number }>((rangeFrom, rangeTo) =>
+            supabase
+                .from('payments')
+                .select('colaborador_id, total')
+                .gte('fecha_pago', from.toISOString())
+                .lte('fecha_pago', to.toISOString())
+                .range(rangeFrom, rangeTo)
+        ),
+        supabase.from('profiles').select('id, nombre')
+    ]);
+
+    const nameById = new Map((profiles || []).map((p: { id: string; nombre: string }) => [p.id, p.nombre]));
+
+    const byCollaborator: Record<string, { totalVentas: number; numPagos: number }> = {};
+    payments.forEach(p => {
+        if (!p.colaborador_id) return;
+        const entry = byCollaborator[p.colaborador_id] || { totalVentas: 0, numPagos: 0 };
+        entry.totalVentas += p.total;
+        entry.numPagos += 1;
+        byCollaborator[p.colaborador_id] = entry;
+    });
+
+    return Object.entries(byCollaborator)
+        .map(([colaboradorId, stats]) => ({
+            colaboradorId,
+            nombre: nameById.get(colaboradorId) || 'Desconocido',
+            ...stats
+        }))
+        .sort((a, b) => b.totalVentas - a.totalVentas);
 }

@@ -1,10 +1,11 @@
-import { supabase } from './supabase';
+import { supabase, fetchAllRows } from './supabase';
 import type { Member, Subscription } from '../../domain/types';
 
 export interface MemberWithStatus extends Member {
     subscriptionStatus: 'activa' | 'vencida' | 'cancelada' | 'sin_suscripcion';
     daysRemaining: number;
     currentPlanName?: string;
+    subscriptionEndDate?: string; // fecha_vencimiento of the subscription behind subscriptionStatus
 }
 
 export async function getMembers(limit = 50): Promise<MemberWithStatus[]> {
@@ -110,7 +111,7 @@ interface MemberWithSubscriptions extends Member {
     subscriptions: (Subscription & { plan?: { nombre: string } })[];
 }
 
-function mapMembersWithStatus(data: MemberWithSubscriptions[]): MemberWithStatus[] {
+export function mapMembersWithStatus(data: MemberWithSubscriptions[]): MemberWithStatus[] {
     const today = new Date();
 
     return data.map((member) => {
@@ -174,6 +175,7 @@ function mapMembersWithStatus(data: MemberWithSubscriptions[]): MemberWithStatus
             subscriptionStatus: status,
             daysRemaining: daysResult,
             currentPlanName: targetSub?.plan?.nombre,
+            subscriptionEndDate: targetSub?.fecha_vencimiento,
             visitas_disponibles: member.visitas_disponibles,
             ultima_visita: member.ultima_visita // Pass through for check-in logic
         };
@@ -273,5 +275,118 @@ export async function updateSubscriptionExpiration(memberId: string, newDate: st
         .eq('id', targetSub.id);
 
     return !error;
+}
+
+// Full member roster with computed status - unlike getMembers(), not capped at a display limit.
+// Used by reports that need to look at every member, not just the most recently registered ones.
+export async function getAllMembersWithStatus(): Promise<MemberWithStatus[]> {
+    const data = await fetchAllRows<MemberWithSubscriptions>((from, to) =>
+        supabase
+            .from('members')
+            .select(`*, subscriptions (*, plan:plans(nombre))`)
+            .range(from, to)
+    );
+
+    return mapMembersWithStatus(data);
+}
+
+export interface ChurnedMember {
+    id: string;
+    nombre: string;
+    apellido: string;
+    telefono?: string;
+    planName?: string;
+    fechaVencimiento: string;
+}
+
+// Members whose most recent subscription expired within [from, to] and hasn't been renewed
+// since (their computed status is still 'vencida' today). Reuses mapMembersWithStatus so this
+// stays consistent with what counts as "active"/"expired" everywhere else in the app.
+export async function getChurnedMembers(from: Date, to: Date): Promise<ChurnedMember[]> {
+    const all = await getAllMembersWithStatus();
+
+    return all
+        .filter((m): m is MemberWithStatus & { subscriptionEndDate: string } =>
+            m.subscriptionStatus === 'vencida' && !!m.subscriptionEndDate
+        )
+        .filter(m => {
+            const expired = new Date(m.subscriptionEndDate);
+            return expired >= from && expired <= to;
+        })
+        .map(m => ({
+            id: m.id,
+            nombre: m.nombre,
+            apellido: m.apellido,
+            telefono: m.telefono,
+            planName: m.currentPlanName,
+            fechaVencimiento: m.subscriptionEndDate
+        }))
+        .sort((a, b) => new Date(b.fechaVencimiento).getTime() - new Date(a.fechaVencimiento).getTime());
+}
+
+export interface NewMembersRow {
+    monthStr: string; // YYYY-MM
+    count: number;
+}
+
+export async function getNewMembersByMonth(months = 6): Promise<NewMembersRow[]> {
+    const today = new Date();
+    const startDate = new Date(today.getFullYear(), today.getMonth() - (months - 1), 1);
+
+    const rows = await fetchAllRows<{ fecha_registro: string }>((from, to) =>
+        supabase
+            .from('members')
+            .select('fecha_registro')
+            .gte('fecha_registro', startDate.toISOString())
+            .range(from, to)
+    );
+
+    const reportMap: Record<string, number> = {};
+    for (let i = 0; i < months; i++) {
+        const d = new Date(startDate.getFullYear(), startDate.getMonth() + i, 1);
+        const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        reportMap[monthKey] = 0;
+    }
+
+    rows.forEach(r => {
+        const d = new Date(r.fecha_registro);
+        const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        if (reportMap[monthKey] !== undefined) reportMap[monthKey]++;
+    });
+
+    return Object.entries(reportMap)
+        .map(([monthStr, count]) => ({ monthStr, count }))
+        .sort((a, b) => a.monthStr.localeCompare(b.monthStr));
+}
+
+export interface PlanMemberCount {
+    planName: string;
+    count: number;
+}
+
+// Active members grouped by plan - same "active" definition as getActiveMemberCount
+// (estatus='activa' AND fecha_vencimiento in the future), just broken out per plan.
+export async function getActiveMembersByPlan(): Promise<PlanMemberCount[]> {
+    const today = new Date().toISOString();
+
+    // Supabase infers embedded to-one joins as arrays without generated schema types
+    const rows = await fetchAllRows<{ plan: { nombre: string }[] | null }>((from, to) =>
+        supabase
+            .from('subscriptions')
+            .select('plan:plans(nombre)')
+            .eq('estatus', 'activa')
+            .gt('fecha_vencimiento', today)
+            .range(from, to)
+    );
+
+    const counts: Record<string, number> = {};
+    rows.forEach(r => {
+        const planName = r.plan?.[0]?.nombre || 'Sin plan';
+        counts[planName] = (counts[planName] || 0) + 1;
+    });
+
+    return Object.entries(counts)
+        .map(([planName, count]) => ({ planName, count }))
+        .sort((a, b) => b.count - a.count);
 }
 
