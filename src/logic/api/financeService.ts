@@ -514,7 +514,9 @@ export interface DailyReportRow {
     attendeesMorning: number;
     attendeesEvening: number;
     totalAttendees: number;
-    paymentsByPlan: Record<string, number>;
+    paymentsByPlan: Record<string, number>; // count of payments per plan
+    revenueByPlan: Record<string, number>; // $ revenue per plan - pure sum of payments.total, never net of expenses/retiros
+    totalRevenue: number;
     totalShiftReturns: number; // total handed over to admin from closed shifts
 }
 
@@ -534,6 +536,7 @@ export async function getDailyPerformanceSummary(from: Date, to: Date): Promise<
         .from('payments')
         .select(`
             fecha_pago,
+            total,
             plan:plans(nombre)
         `)
         .gte('fecha_pago', startBoundary)
@@ -563,6 +566,8 @@ export async function getDailyPerformanceSummary(from: Date, to: Date): Promise<
             attendeesEvening: 0,
             totalAttendees: 0,
             paymentsByPlan: {},
+            revenueByPlan: {},
+            totalRevenue: 0,
             totalShiftReturns: 0
         };
     }
@@ -584,7 +589,8 @@ export async function getDailyPerformanceSummary(from: Date, to: Date): Promise<
         }
     });
 
-    // Aggregate Payments
+    // Aggregate Payments (count AND revenue per plan - revenue is a pure sum of payments.total,
+    // it never touches expenses/retiros, so cash withdrawals during a shift don't affect it)
     (paymentData || []).forEach((p: any) => {
         const d = new Date(p.fecha_pago);
         const y = d.getFullYear();
@@ -594,6 +600,8 @@ export async function getDailyPerformanceSummary(from: Date, to: Date): Promise<
         if (reportMap[dateKey]) {
             const planName = p.plan?.nombre || 'Productos';
             reportMap[dateKey].paymentsByPlan[planName] = (reportMap[dateKey].paymentsByPlan[planName] || 0) + 1;
+            reportMap[dateKey].revenueByPlan[planName] = (reportMap[dateKey].revenueByPlan[planName] || 0) + p.total;
+            reportMap[dateKey].totalRevenue += p.total;
         }
     });
 
@@ -771,4 +779,42 @@ export async function getSalesByCollaborator(from: Date, to: Date): Promise<Coll
             ...stats
         }))
         .sort((a, b) => b.totalVentas - a.totalVentas);
+}
+
+export interface ShiftTypeRevenue {
+    matutino: number;
+    vespertino: number;
+}
+
+// Revenue split by which shift was open when each payment was made (payments.turno_id ->
+// shifts.horario). Pure sum of payments.total, same "never net of expenses" rule as the rest.
+export async function getRevenueByShiftType(from: Date, to: Date): Promise<ShiftTypeRevenue> {
+    const payments = await fetchAllRows<{ turno_id: string | null; total: number }>((rangeFrom, rangeTo) =>
+        supabase
+            .from('payments')
+            .select('turno_id, total')
+            .gte('fecha_pago', from.toISOString())
+            .lte('fecha_pago', to.toISOString())
+            .range(rangeFrom, rangeTo)
+    );
+
+    const turnoIds = Array.from(new Set(payments.map(p => p.turno_id).filter((id): id is string => !!id)));
+
+    const horarioById = new Map<string, string>();
+    if (turnoIds.length > 0) {
+        const shifts = await fetchAllRows<{ id: string; horario: string }>((rangeFrom, rangeTo) =>
+            supabase.from('shifts').select('id, horario').in('id', turnoIds).range(rangeFrom, rangeTo)
+        );
+        shifts.forEach(s => horarioById.set(s.id, s.horario));
+    }
+
+    const result: ShiftTypeRevenue = { matutino: 0, vespertino: 0 };
+    payments.forEach(p => {
+        if (!p.turno_id) return;
+        const horario = horarioById.get(p.turno_id);
+        if (horario === 'matutino') result.matutino += p.total;
+        else if (horario === 'vespertino') result.vespertino += p.total;
+    });
+
+    return result;
 }
