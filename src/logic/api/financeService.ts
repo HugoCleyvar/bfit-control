@@ -2,6 +2,31 @@ import { supabase } from './supabase';
 import type { Payment, Shift, CashCount, Expense } from '../../domain/types';
 import { calculateNominalExpiration } from '../../domain/dateUtils';
 
+// Supabase/PostgREST caps any unranged .select() at a server-configured row limit
+// (1000 by default). Report aggregates need every row, so this pages through with
+// .range() until an empty page comes back, instead of trusting a single request.
+async function fetchAllRows<T>(
+    build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>
+): Promise<T[]> {
+    const pageSize = 1000;
+    let offset = 0;
+    const rows: T[] = [];
+
+    while (true) {
+        const { data, error } = await build(offset, offset + pageSize - 1);
+        if (error) {
+            console.error('Error paginating rows:', error);
+            break;
+        }
+        if (!data || data.length === 0) break;
+
+        rows.push(...data);
+        offset += data.length;
+    }
+
+    return rows;
+}
+
 export interface PaymentWithDetails extends Payment {
     member?: { nombre: string; apellido: string; telefono?: string };
     plan?: { nombre: string; duracion_dias: number };
@@ -66,18 +91,13 @@ export interface IncomeSummary {
 
 // Full historical income summary (no row limit, unlike getPayments which is paginated for lists)
 export async function getIncomeSummary(): Promise<IncomeSummary> {
-    const { data, error } = await supabase
-        .from('payments')
-        .select('total, metodo_pago');
-
-    if (error) {
-        console.error('Error getting income summary:', error);
-        return { total: 0, byMethod: {} };
-    }
+    const rows = await fetchAllRows<{ total: number; metodo_pago: string }>((from, to) =>
+        supabase.from('payments').select('total, metodo_pago').range(from, to)
+    );
 
     const byMethod: Record<string, number> = {};
     let total = 0;
-    (data || []).forEach((p: { total: number; metodo_pago: string }) => {
+    rows.forEach((p) => {
         total += p.total;
         byMethod[p.metodo_pago] = (byMethod[p.metodo_pago] || 0) + p.total;
     });
@@ -137,18 +157,22 @@ export async function getShiftHistory(limit = 20): Promise<ShiftHistoryRow[]> {
 
     const shiftIds = shifts.map((s: { id: string }) => s.id);
 
-    const [{ data: cashPayments }, { data: expensesData }] = await Promise.all([
-        supabase.from('payments').select('turno_id, total').eq('metodo_pago', 'efectivo').in('turno_id', shiftIds),
-        supabase.from('expenses').select('turno_id, monto').in('turno_id', shiftIds)
+    const [cashPayments, expensesData] = await Promise.all([
+        fetchAllRows<{ turno_id: string; total: number }>((from, to) =>
+            supabase.from('payments').select('turno_id, total').eq('metodo_pago', 'efectivo').in('turno_id', shiftIds).range(from, to)
+        ),
+        fetchAllRows<{ turno_id: string; monto: number }>((from, to) =>
+            supabase.from('expenses').select('turno_id, monto').in('turno_id', shiftIds).range(from, to)
+        )
     ]);
 
     const cashByShift: Record<string, number> = {};
-    (cashPayments || []).forEach((p: { turno_id: string; total: number }) => {
+    cashPayments.forEach((p) => {
         cashByShift[p.turno_id] = (cashByShift[p.turno_id] || 0) + p.total;
     });
 
     const expensesByShift: Record<string, number> = {};
-    (expensesData || []).forEach((e: { turno_id: string; monto: number }) => {
+    expensesData.forEach((e) => {
         expensesByShift[e.turno_id] = (expensesByShift[e.turno_id] || 0) + e.monto;
     });
 
