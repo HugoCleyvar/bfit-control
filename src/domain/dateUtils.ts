@@ -40,3 +40,19 @@ export function isSameDay(date1: Date, date2: Date): boolean {
         date1.getFullYear() === date2.getFullYear()
     );
 }
+
+/**
+ * Local midnight (00:00:00.000) of the given date. Building boundaries this way - via the
+ * local-time Date constructor - rather than snapshotting "now" and calling toISOString(),
+ * keeps the resulting UTC instant aligned with local-time day bucketing.
+ */
+export function startOfLocalDay(date: Date): Date {
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+/**
+ * Last instant (23:59:59.999) of the given date, in local time.
+ */
+export function endOfLocalDay(date: Date): Date {
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+}

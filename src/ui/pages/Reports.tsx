@@ -2,13 +2,119 @@ import { useEffect, useState, useCallback } from 'react';
 import { getIncomeSummary, getShiftHistory, getDailyPerformanceSummary, getMonthlyPerformanceSummary } from '../../logic/api/financeService';
 import { getActiveMemberCount } from '../../logic/api/memberService';
 import { getDailyAttendanceByShift } from '../../logic/api/attendanceService';
+import { startOfLocalDay, endOfLocalDay } from '../../domain/dateUtils';
 import type { DailyReportRow, MonthlyReportRow, ShiftHistoryRow } from '../../logic/api/financeService';
 
-import { BarChart, PieChart, TrendingUp, Users } from 'lucide-react';
+import { BarChart, PieChart, TrendingUp, Users, Calendar } from 'lucide-react';
 import { BarChart as RechartsBarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 function formatMoney(amount: number): string {
     return amount.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+interface DateRange {
+    from: Date;
+    to: Date;
+}
+
+type RangePreset = '7d' | '30d' | 'month' | 'custom';
+
+function presetRange(preset: Exclude<RangePreset, 'custom'>): DateRange {
+    const today = new Date();
+    const to = endOfLocalDay(today);
+    if (preset === '7d') {
+        return { from: startOfLocalDay(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6)), to };
+    }
+    if (preset === '30d') {
+        return { from: startOfLocalDay(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 29)), to };
+    }
+    // 'month': from the 1st of the current month
+    return { from: startOfLocalDay(new Date(today.getFullYear(), today.getMonth(), 1)), to };
+}
+
+// YYYY-MM-DD using local date parts, for <input type="date"> - toISOString() would shift
+// the date across timezone boundaries and desync the picker from what's selected.
+function toDateInputValue(date: Date): string {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
+
+function parseDateInputValue(value: string): Date {
+    const [y, m, d] = value.split('-').map(Number);
+    return new Date(y, m - 1, d);
+}
+
+const RANGE_PRESET_LABELS: Record<Exclude<RangePreset, 'custom'>, string> = {
+    '7d': 'Últimos 7 días',
+    '30d': 'Últimos 30 días',
+    month: 'Este mes'
+};
+
+function DateRangePicker({ range, onChange }: { range: DateRange; onChange: (range: DateRange) => void }) {
+    const [preset, setPreset] = useState<RangePreset>('7d');
+    const todayInputValue = toDateInputValue(new Date());
+
+    const applyPreset = (p: Exclude<RangePreset, 'custom'>) => {
+        setPreset(p);
+        onChange(presetRange(p));
+    };
+
+    const handleCustomChange = (field: 'from' | 'to', value: string) => {
+        if (!value) return;
+        setPreset('custom');
+        const picked = parseDateInputValue(value);
+
+        if (field === 'from') {
+            const from = startOfLocalDay(picked);
+            onChange({ from, to: from > range.to ? endOfLocalDay(picked) : range.to });
+        } else {
+            const to = endOfLocalDay(picked);
+            onChange({ from: to < range.from ? startOfLocalDay(picked) : range.from, to });
+        }
+    };
+
+    return (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
+            {(Object.keys(RANGE_PRESET_LABELS) as Exclude<RangePreset, 'custom'>[]).map(p => (
+                <button
+                    key={p}
+                    onClick={() => applyPreset(p)}
+                    style={{
+                        padding: '8px 16px',
+                        borderRadius: '20px',
+                        border: '1px solid var(--color-border)',
+                        background: preset === p ? 'var(--color-primary)' : 'transparent',
+                        color: preset === p ? 'black' : 'var(--color-text)',
+                        cursor: 'pointer',
+                        fontSize: '13px'
+                    }}
+                >
+                    {RANGE_PRESET_LABELS[p]}
+                </button>
+            ))}
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '4px' }}>
+                <input
+                    type="date"
+                    value={toDateInputValue(range.from)}
+                    max={toDateInputValue(range.to)}
+                    onChange={e => handleCustomChange('from', e.target.value)}
+                    style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg)', color: 'var(--color-text)', fontSize: '13px' }}
+                />
+                <span style={{ color: 'var(--color-text-secondary)' }}>–</span>
+                <input
+                    type="date"
+                    value={toDateInputValue(range.to)}
+                    min={toDateInputValue(range.from)}
+                    max={todayInputValue}
+                    onChange={e => handleCustomChange('to', e.target.value)}
+                    style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg)', color: 'var(--color-text)', fontSize: '13px' }}
+                />
+            </div>
+        </div>
+    );
 }
 
 export default function Reports() {
@@ -16,6 +122,7 @@ export default function Reports() {
     const [totalIncome, setTotalIncome] = useState(0);
     const [paymentMethods, setPaymentMethods] = useState<Record<string, number>>({});
     const [activeMembers, setActiveMembers] = useState(0);
+    const [range, setRange] = useState<DateRange>(() => presetRange('7d'));
 
     const loadData = useCallback(async () => {
         setLoading(true);
@@ -85,42 +192,51 @@ export default function Reports() {
                 </div>
             </div>
 
+            {/* Date Range Picker - controls the two daily-granularity sections below */}
+            <div style={{ marginTop: 'var(--spacing-xl)', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-text-secondary)', fontSize: '14px' }}>
+                    <Calendar size={16} /> Periodo:
+                </span>
+                <DateRangePicker range={range} onChange={setRange} />
+            </div>
+
             {/* Accesos Section */}
-            <div style={{ marginTop: 'var(--spacing-xl)' }}>
-                <AttendanceShiftChart />
+            <div style={{ marginTop: 'var(--spacing-lg)' }}>
+                <AttendanceShiftChart range={range} />
             </div>
 
             {/* Daily Summary Section */}
             <div style={{ marginTop: 'var(--spacing-xl)' }}>
                 <h3>Resumen Diario (Ventas y Asistencia)</h3>
-                <DailyReportTable />
+                <DailyReportTable range={range} />
             </div>
 
-            {/* Monthly Summary Section */}
+            {/* Monthly Summary Section - independent rolling 6-month trend, not affected by the picker above */}
             <div style={{ marginTop: 'var(--spacing-xl)' }}>
-                <h3>Resumen Mensual</h3>
+                <h3>Resumen Mensual (Últimos 6 Meses)</h3>
                 <MonthlyReportTable />
             </div>
 
-            {/* Shift History Section */}
+            {/* Shift History Section - independent audit log of the last closed shifts, not affected by the picker above */}
             <div style={{ marginTop: 'var(--spacing-xl)' }}>
-                <h3>Historial de Cortes de Caja</h3>
+                <h3>Historial de Cortes de Caja (Últimos 20)</h3>
                 <ShiftHistoryTable />
             </div>
         </div>
     );
 }
 
-function AttendanceShiftChart() {
+function AttendanceShiftChart({ range }: { range: DateRange }) {
     const [data, setData] = useState<{ date: string; matutino: number; vespertino: number }[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        getDailyAttendanceByShift(7).then(res => {
+        setLoading(true);
+        getDailyAttendanceByShift(range.from, range.to).then(res => {
             setData(res);
             setLoading(false);
         });
-    }, []);
+    }, [range]);
 
     if (loading) return <div>Cargando accesos...</div>;
 
@@ -133,7 +249,7 @@ function AttendanceShiftChart() {
     return (
         <div style={{ backgroundColor: 'var(--color-card)', padding: 'var(--spacing-xl)', borderRadius: 'var(--radius-lg)', height: '400px' }}>
             <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: 'var(--spacing-lg)' }}>
-                <Users color="var(--color-primary)" /> Accesos por Turno (Últimos 7 días)
+                <Users color="var(--color-primary)" /> Accesos por Turno
             </h3>
             <ResponsiveContainer width="100%" height="85%">
                 <RechartsBarChart data={formattedData}>
@@ -237,16 +353,17 @@ function ShiftHistoryTable() {
     );
 }
 
-function DailyReportTable() {
+function DailyReportTable({ range }: { range: DateRange }) {
     const [data, setData] = useState<DailyReportRow[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        getDailyPerformanceSummary(7).then(res => {
+        setLoading(true);
+        getDailyPerformanceSummary(range.from, range.to).then(res => {
             setData(res);
             setLoading(false);
         });
-    }, []);
+    }, [range]);
 
     if (loading) return <div>Cargando resumen diario...</div>;
     if (data.length === 0) return <div style={{ fontStyle: 'italic', color: 'var(--color-text-secondary)' }}>No hay datos disponibles.</div>;
