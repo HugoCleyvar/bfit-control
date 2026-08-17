@@ -524,31 +524,37 @@ export async function getDailyPerformanceSummary(from: Date, to: Date): Promise<
     const startBoundary = from.toISOString();
     const endBoundary = to.toISOString();
 
-    // Fetch Attendance
-    const { data: attendanceData } = await supabase
-        .from('attendance')
-        .select('fecha_hora')
-        .gte('fecha_hora', startBoundary)
-        .lte('fecha_hora', endBoundary);
+    // Fetch Attendance (paginated - without .range(), Supabase silently caps at its default
+    // row limit with no guaranteed order, which can drop entire recent days/months from a
+    // report without any error. See fetchAllRows in supabase.ts.)
+    const attendanceData = await fetchAllRows<{ fecha_hora: string }>((rangeFrom, rangeTo) =>
+        supabase.from('attendance').select('fecha_hora').gte('fecha_hora', startBoundary).lte('fecha_hora', endBoundary).range(rangeFrom, rangeTo)
+    );
 
     // Fetch Payments with Plans to group by membership type
-    const { data: paymentData } = await supabase
-        .from('payments')
-        .select(`
-            fecha_pago,
-            total,
-            plan:plans(nombre)
-        `)
-        .gte('fecha_pago', startBoundary)
-        .lte('fecha_pago', endBoundary);
+    const paymentData = await fetchAllRows<any>((rangeFrom, rangeTo) =>
+        supabase
+            .from('payments')
+            .select(`
+                fecha_pago,
+                total,
+                plan:plans(nombre)
+            `)
+            .gte('fecha_pago', startBoundary)
+            .lte('fecha_pago', endBoundary)
+            .range(rangeFrom, rangeTo)
+    );
 
     // Fetch Shifts to get closed cash differences (Corte entregado)
-    const { data: shiftData } = await supabase
-        .from('shifts')
-        .select('hora_cierre, total_efectivo, desglose_cierre, fondo_siguiente_turno')
-        .eq('estatus', 'cerrado')
-        .gte('hora_cierre', startBoundary)
-        .lte('hora_cierre', endBoundary);
+    const shiftData = await fetchAllRows<any>((rangeFrom, rangeTo) =>
+        supabase
+            .from('shifts')
+            .select('hora_cierre, total_efectivo, desglose_cierre, fondo_siguiente_turno')
+            .eq('estatus', 'cerrado')
+            .gte('hora_cierre', startBoundary)
+            .lte('hora_cierre', endBoundary)
+            .range(rangeFrom, rangeTo)
+    );
 
     const reportMap: Record<string, DailyReportRow> = {};
     const startDate = startOfLocalDay(from);
@@ -573,7 +579,7 @@ export async function getDailyPerformanceSummary(from: Date, to: Date): Promise<
     }
 
     // Aggregate Attendance
-    (attendanceData || []).forEach((a: any) => {
+    attendanceData.forEach((a) => {
         const d = new Date(a.fecha_hora);
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -591,7 +597,7 @@ export async function getDailyPerformanceSummary(from: Date, to: Date): Promise<
 
     // Aggregate Payments (count AND revenue per plan - revenue is a pure sum of payments.total,
     // it never touches expenses/retiros, so cash withdrawals during a shift don't affect it)
-    (paymentData || []).forEach((p: any) => {
+    paymentData.forEach((p: any) => {
         const d = new Date(p.fecha_pago);
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -606,7 +612,7 @@ export async function getDailyPerformanceSummary(from: Date, to: Date): Promise<
     });
 
     // Aggregate Shift Cut (Corte de caja)
-    (shiftData || []).forEach((s: any) => {
+    shiftData.forEach((s: any) => {
         if (!s.hora_cierre) return;
         const d = new Date(s.hora_cierre);
         const y = d.getFullYear();
@@ -644,28 +650,35 @@ export async function getMonthlyPerformanceSummary(months = 6): Promise<MonthlyR
     const startDate = new Date(today.getFullYear(), today.getMonth() - (months - 1), 1);
     const startBoundary = startDate.toISOString();
 
-    // Fetch Attendance
-    const { data: attendanceData } = await supabase
-        .from('attendance')
-        .select('fecha_hora')
-        .gte('fecha_hora', startBoundary);
+    // Fetch Attendance (paginated - see the comment in getDailyPerformanceSummary for why:
+    // without .range(), Supabase silently caps at its default row limit with no guaranteed
+    // order, which was dropping recent months - the most data-heavy ones - from this report)
+    const attendanceData = await fetchAllRows<{ fecha_hora: string }>((rangeFrom, rangeTo) =>
+        supabase.from('attendance').select('fecha_hora').gte('fecha_hora', startBoundary).range(rangeFrom, rangeTo)
+    );
 
     // Fetch Payments with Plans to group by membership type
-    const { data: paymentData } = await supabase
-        .from('payments')
-        .select(`
-            fecha_pago,
-            total,
-            plan:plans(nombre)
-        `)
-        .gte('fecha_pago', startBoundary);
+    const paymentData = await fetchAllRows<any>((rangeFrom, rangeTo) =>
+        supabase
+            .from('payments')
+            .select(`
+                fecha_pago,
+                total,
+                plan:plans(nombre)
+            `)
+            .gte('fecha_pago', startBoundary)
+            .range(rangeFrom, rangeTo)
+    );
 
     // Fetch Shifts to get closed cash differences
-    const { data: shiftData } = await supabase
-        .from('shifts')
-        .select('hora_cierre, total_efectivo, desglose_cierre, fondo_siguiente_turno')
-        .eq('estatus', 'cerrado')
-        .gte('hora_cierre', startBoundary);
+    const shiftData = await fetchAllRows<any>((rangeFrom, rangeTo) =>
+        supabase
+            .from('shifts')
+            .select('hora_cierre, total_efectivo, desglose_cierre, fondo_siguiente_turno')
+            .eq('estatus', 'cerrado')
+            .gte('hora_cierre', startBoundary)
+            .range(rangeFrom, rangeTo)
+    );
 
     const reportMap: Record<string, MonthlyReportRow> = {};
 
@@ -687,7 +700,7 @@ export async function getMonthlyPerformanceSummary(months = 6): Promise<MonthlyR
     }
 
     // Aggregate Attendance
-    (attendanceData || []).forEach((a: any) => {
+    attendanceData.forEach((a) => {
         const d = new Date(a.fecha_hora);
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -704,7 +717,7 @@ export async function getMonthlyPerformanceSummary(months = 6): Promise<MonthlyR
 
     // Aggregate Payments (count AND revenue per plan - revenue is a pure sum of payments.total,
     // it never touches expenses/retiros, so cash withdrawals during a shift don't affect it)
-    (paymentData || []).forEach((p: any) => {
+    paymentData.forEach((p: any) => {
         const d = new Date(p.fecha_pago);
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -718,7 +731,7 @@ export async function getMonthlyPerformanceSummary(months = 6): Promise<MonthlyR
     });
 
     // Aggregate Shift Cut (Corte de caja)
-    (shiftData || []).forEach((s: any) => {
+    shiftData.forEach((s: any) => {
         if (!s.hora_cierre) return;
         const d = new Date(s.hora_cierre);
         const y = d.getFullYear();
