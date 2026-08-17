@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 import type { Payment, Shift, Expense } from '../../domain/types';
-import { calculateNominalExpiration } from '../../domain/dateUtils';
+import { calculateNominalExpiration, startOfLocalDay } from '../../domain/dateUtils';
 
 // Supabase/PostgREST caps any unranged .select() at a server-configured row limit
 // (1000 by default). Report aggregates need every row, so this pages through with
@@ -543,18 +543,16 @@ export interface DailyReportRow {
     totalShiftReturns: number; // total handed over to admin from closed shifts
 }
 
-export async function getDailyPerformanceSummary(days = 7): Promise<DailyReportRow[]> {
-    const today = new Date();
-    // Anchor at local midnight so the UTC instant sent to these queries lines up with the
-    // local-time bucketing below (see getDailyAttendanceByShift for why this matters).
-    const startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() - (days - 1));
-    const startBoundary = startDate.toISOString();
+export async function getDailyPerformanceSummary(from: Date, to: Date): Promise<DailyReportRow[]> {
+    const startBoundary = from.toISOString();
+    const endBoundary = to.toISOString();
 
     // Fetch Attendance
     const { data: attendanceData } = await supabase
         .from('attendance')
         .select('fecha_hora')
-        .gte('fecha_hora', startBoundary);
+        .gte('fecha_hora', startBoundary)
+        .lte('fecha_hora', endBoundary);
 
     // Fetch Payments with Plans to group by membership type
     const { data: paymentData } = await supabase
@@ -563,20 +561,23 @@ export async function getDailyPerformanceSummary(days = 7): Promise<DailyReportR
             fecha_pago,
             plan:plans(nombre)
         `)
-        .gte('fecha_pago', startBoundary);
+        .gte('fecha_pago', startBoundary)
+        .lte('fecha_pago', endBoundary);
 
     // Fetch Shifts to get closed cash differences (Corte entregado)
     const { data: shiftData } = await supabase
         .from('shifts')
         .select('hora_cierre, total_efectivo, desglose_cierre, fondo_siguiente_turno')
         .eq('estatus', 'cerrado')
-        .gte('hora_cierre', startBoundary);
+        .gte('hora_cierre', startBoundary)
+        .lte('hora_cierre', endBoundary);
 
     const reportMap: Record<string, DailyReportRow> = {};
+    const startDate = startOfLocalDay(from);
+    const dayCount = Math.round((startOfLocalDay(to).getTime() - startDate.getTime()) / 86400000) + 1;
 
-    for (let i = 0; i < days; i++) {
-        const d = new Date(startDate);
-        d.setDate(startDate.getDate() + i);
+    for (let i = 0; i < dayCount; i++) {
+        const d = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate() + i);
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, '0');
         const day = String(d.getDate()).padStart(2, '0');
