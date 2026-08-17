@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import type { Payment, Shift, CashCount, Expense } from '../../domain/types';
+import type { Payment, Shift, Expense } from '../../domain/types';
 import { calculateNominalExpiration } from '../../domain/dateUtils';
 
 // Supabase/PostgREST caps any unranged .select() at a server-configured row limit
@@ -234,32 +234,6 @@ export async function registerExpense(shiftId: string, amount: number, concept: 
         .eq('id', shiftId);
 
     return !shiftError;
-}
-
-export async function closeShift(shiftId: string, cashCount: CashCount, totalDeclared: number): Promise<{ success: boolean; difference: number }> {
-    const { data: shift, error: fetchError } = await supabase
-        .from('shifts')
-        .select('total_efectivo')
-        .eq('id', shiftId)
-        .single();
-
-    if (fetchError || !shift) return { success: false, difference: 0 };
-
-    const diff = totalDeclared - shift.total_efectivo;
-    const now = new Date().toISOString();
-
-    const { error: updateError } = await supabase
-        .from('shifts')
-        .update({
-            estatus: 'cerrado',
-            hora_cierre: now,
-            desglose_cierre: cashCount // Store the JSON breakdown
-        })
-        .eq('id', shiftId);
-
-    if (updateError) return { success: false, difference: 0 };
-
-    return { success: true, difference: diff };
 }
 
 export async function openShift(userId: string, initialCash: number): Promise<boolean> {
@@ -571,31 +545,32 @@ export interface DailyReportRow {
 
 export async function getDailyPerformanceSummary(days = 7): Promise<DailyReportRow[]> {
     const today = new Date();
-    const startDate = new Date(today);
-    startDate.setDate(today.getDate() - (days - 1));
-    const startStr = startDate.toISOString().split('T')[0];
+    // Anchor at local midnight so the UTC instant sent to these queries lines up with the
+    // local-time bucketing below (see getDailyAttendanceByShift for why this matters).
+    const startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() - (days - 1));
+    const startBoundary = startDate.toISOString();
 
     // Fetch Attendance
     const { data: attendanceData } = await supabase
         .from('attendance')
         .select('fecha_hora')
-        .gte('fecha_hora', `${startStr}T00:00:00`);
+        .gte('fecha_hora', startBoundary);
 
     // Fetch Payments with Plans to group by membership type
     const { data: paymentData } = await supabase
         .from('payments')
         .select(`
-            fecha_pago, 
+            fecha_pago,
             plan:plans(nombre)
         `)
-        .gte('fecha_pago', `${startStr}T00:00:00`);
+        .gte('fecha_pago', startBoundary);
 
     // Fetch Shifts to get closed cash differences (Corte entregado)
     const { data: shiftData } = await supabase
         .from('shifts')
         .select('hora_cierre, total_efectivo, desglose_cierre, fondo_siguiente_turno')
         .eq('estatus', 'cerrado')
-        .gte('hora_cierre', `${startStr}T00:00:00`);
+        .gte('hora_cierre', startBoundary);
 
     const reportMap: Record<string, DailyReportRow> = {};
 
@@ -655,10 +630,9 @@ export async function getDailyPerformanceSummary(days = 7): Promise<DailyReportR
         const day = String(d.getDate()).padStart(2, '0');
         const dateKey = `${y}-${m}-${day}`;
         if (reportMap[dateKey]) {
-            let collectedInDrawer = s.total_efectivo || 0;
-            if (s.desglose_cierre && typeof s.desglose_cierre === 'object' && 'total' in s.desglose_cierre) {
-                collectedInDrawer = (s.desglose_cierre as any).total;
-            }
+            // total_efectivo already reflects the counted/handed-over cash once the shift is
+            // closed (see closeShift in shiftContext.tsx), so it doesn't need re-deriving.
+            const collectedInDrawer = s.total_efectivo || 0;
             const leftInDrawer = s.fondo_siguiente_turno ? Number(s.fondo_siguiente_turno) : 0;
             const handedToAdmin = Math.max(0, collectedInDrawer - leftInDrawer);
             
@@ -680,31 +654,31 @@ export interface MonthlyReportRow {
 
 export async function getMonthlyPerformanceSummary(months = 6): Promise<MonthlyReportRow[]> {
     const today = new Date();
-    // Start date N months ago (1st day of the month)
+    // Start date N months ago (1st day of the month, local midnight)
     const startDate = new Date(today.getFullYear(), today.getMonth() - (months - 1), 1);
-    const startStr = startDate.toISOString().split('T')[0];
+    const startBoundary = startDate.toISOString();
 
     // Fetch Attendance
     const { data: attendanceData } = await supabase
         .from('attendance')
         .select('fecha_hora')
-        .gte('fecha_hora', `${startStr}T00:00:00`);
+        .gte('fecha_hora', startBoundary);
 
     // Fetch Payments with Plans to group by membership type
     const { data: paymentData } = await supabase
         .from('payments')
         .select(`
-            fecha_pago, 
+            fecha_pago,
             plan:plans(nombre)
         `)
-        .gte('fecha_pago', `${startStr}T00:00:00`);
+        .gte('fecha_pago', startBoundary);
 
     // Fetch Shifts to get closed cash differences
     const { data: shiftData } = await supabase
         .from('shifts')
         .select('hora_cierre, total_efectivo, desglose_cierre, fondo_siguiente_turno')
         .eq('estatus', 'cerrado')
-        .gte('hora_cierre', `${startStr}T00:00:00`);
+        .gte('hora_cierre', startBoundary);
 
     const reportMap: Record<string, MonthlyReportRow> = {};
 
@@ -759,10 +733,9 @@ export async function getMonthlyPerformanceSummary(months = 6): Promise<MonthlyR
         const m = String(d.getMonth() + 1).padStart(2, '0');
         const monthKey = `${y}-${m}`;
         if (reportMap[monthKey]) {
-            let collectedInDrawer = s.total_efectivo || 0;
-            if (s.desglose_cierre && typeof s.desglose_cierre === 'object' && 'total' in s.desglose_cierre) {
-                collectedInDrawer = (s.desglose_cierre as any).total;
-            }
+            // total_efectivo already reflects the counted/handed-over cash once the shift is
+            // closed (see closeShift in shiftContext.tsx), so it doesn't need re-deriving.
+            const collectedInDrawer = s.total_efectivo || 0;
             const leftInDrawer = s.fondo_siguiente_turno ? Number(s.fondo_siguiente_turno) : 0;
             const handedToAdmin = Math.max(0, collectedInDrawer - leftInDrawer);
             
