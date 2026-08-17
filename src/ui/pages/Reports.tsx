@@ -1,11 +1,12 @@
 import { useEffect, useState, useCallback } from 'react';
+import type { CSSProperties } from 'react';
 import { getIncomeSummary, getShiftHistory, getDailyPerformanceSummary, getMonthlyPerformanceSummary } from '../../logic/api/financeService';
 import { getActiveMemberCount } from '../../logic/api/memberService';
 import { getDailyAttendanceByShift } from '../../logic/api/attendanceService';
 import { startOfLocalDay, endOfLocalDay } from '../../domain/dateUtils';
 import type { DailyReportRow, MonthlyReportRow, ShiftHistoryRow } from '../../logic/api/financeService';
 
-import { BarChart, PieChart, TrendingUp, Users, Calendar } from 'lucide-react';
+import { BarChart, PieChart, TrendingUp, Users } from 'lucide-react';
 import { BarChart as RechartsBarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 function formatMoney(amount: number): string {
@@ -19,17 +20,22 @@ interface DateRange {
 
 type RangePreset = '7d' | '30d' | 'month' | 'custom';
 
-function presetRange(preset: Exclude<RangePreset, 'custom'>): DateRange {
+function quickPresetRange(preset: '7d' | '30d'): DateRange {
     const today = new Date();
     const to = endOfLocalDay(today);
-    if (preset === '7d') {
-        return { from: startOfLocalDay(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6)), to };
-    }
-    if (preset === '30d') {
-        return { from: startOfLocalDay(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 29)), to };
-    }
-    // 'month': from the 1st of the current month
-    return { from: startOfLocalDay(new Date(today.getFullYear(), today.getMonth(), 1)), to };
+    const daysBack = preset === '7d' ? 6 : 29;
+    return { from: startOfLocalDay(new Date(today.getFullYear(), today.getMonth(), today.getDate() - daysBack)), to };
+}
+
+// Full calendar month (1st to last day). If the picked month is still in progress, "to" is
+// capped at today instead of running past it.
+function monthRange(monthValue: string): DateRange {
+    const [y, m] = monthValue.split('-').map(Number);
+    const from = new Date(y, m - 1, 1);
+    const lastDayOfMonth = new Date(y, m, 0); // day 0 of next month = last day of this one
+    const today = new Date();
+    const to = lastDayOfMonth < today ? endOfLocalDay(lastDayOfMonth) : endOfLocalDay(today);
+    return { from: startOfLocalDay(from), to };
 }
 
 // YYYY-MM-DD using local date parts, for <input type="date"> - toISOString() would shift
@@ -46,24 +52,62 @@ function parseDateInputValue(value: string): Date {
     return new Date(y, m - 1, d);
 }
 
-const RANGE_PRESET_LABELS: Record<Exclude<RangePreset, 'custom'>, string> = {
-    '7d': 'Últimos 7 días',
-    '30d': 'Últimos 30 días',
-    month: 'Este mes'
+// YYYY-MM using local date parts, for <input type="month">
+function toMonthInputValue(date: Date): string {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    return `${y}-${m}`;
+}
+
+function pickerButtonStyle(active: boolean): CSSProperties {
+    return {
+        padding: '8px 16px',
+        borderRadius: '20px',
+        border: '1px solid var(--color-border)',
+        background: active ? 'var(--color-primary)' : 'transparent',
+        color: active ? 'black' : 'var(--color-text)',
+        cursor: 'pointer',
+        fontSize: '13px'
+    };
+}
+
+const pickerInputStyle: CSSProperties = {
+    padding: '7px 10px',
+    borderRadius: '8px',
+    border: '1px solid var(--color-border)',
+    backgroundColor: 'var(--color-bg)',
+    color: 'var(--color-text)',
+    fontSize: '13px'
 };
+
+const QUICK_PRESETS: { key: '7d' | '30d'; label: string }[] = [
+    { key: '7d', label: 'Últimos 7 días' },
+    { key: '30d', label: 'Últimos 30 días' }
+];
 
 function DateRangePicker({ range, onChange }: { range: DateRange; onChange: (range: DateRange) => void }) {
     const [preset, setPreset] = useState<RangePreset>('7d');
+    const [monthValue, setMonthValue] = useState(() => toMonthInputValue(new Date()));
     const todayInputValue = toDateInputValue(new Date());
 
-    const applyPreset = (p: Exclude<RangePreset, 'custom'>) => {
+    const applyQuickPreset = (p: '7d' | '30d') => {
         setPreset(p);
-        onChange(presetRange(p));
+        onChange(quickPresetRange(p));
+    };
+
+    const selectMonthMode = () => {
+        setPreset('month');
+        onChange(monthRange(monthValue));
+    };
+
+    const handleMonthChange = (value: string) => {
+        if (!value) return;
+        setMonthValue(value);
+        onChange(monthRange(value));
     };
 
     const handleCustomChange = (field: 'from' | 'to', value: string) => {
         if (!value) return;
-        setPreset('custom');
         const picked = parseDateInputValue(value);
 
         if (field === 'from') {
@@ -77,42 +121,48 @@ function DateRangePicker({ range, onChange }: { range: DateRange; onChange: (ran
 
     return (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
-            {(Object.keys(RANGE_PRESET_LABELS) as Exclude<RangePreset, 'custom'>[]).map(p => (
-                <button
-                    key={p}
-                    onClick={() => applyPreset(p)}
-                    style={{
-                        padding: '8px 16px',
-                        borderRadius: '20px',
-                        border: '1px solid var(--color-border)',
-                        background: preset === p ? 'var(--color-primary)' : 'transparent',
-                        color: preset === p ? 'black' : 'var(--color-text)',
-                        cursor: 'pointer',
-                        fontSize: '13px'
-                    }}
-                >
-                    {RANGE_PRESET_LABELS[p]}
+            {QUICK_PRESETS.map(({ key, label }) => (
+                <button key={key} onClick={() => applyQuickPreset(key)} style={pickerButtonStyle(preset === key)}>
+                    {label}
                 </button>
             ))}
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '4px' }}>
+            <button onClick={selectMonthMode} style={pickerButtonStyle(preset === 'month')}>
+                Por mes
+            </button>
+            {preset === 'month' && (
                 <input
-                    type="date"
-                    value={toDateInputValue(range.from)}
-                    max={toDateInputValue(range.to)}
-                    onChange={e => handleCustomChange('from', e.target.value)}
-                    style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg)', color: 'var(--color-text)', fontSize: '13px' }}
+                    type="month"
+                    value={monthValue}
+                    max={toMonthInputValue(new Date())}
+                    onChange={e => handleMonthChange(e.target.value)}
+                    style={pickerInputStyle}
                 />
-                <span style={{ color: 'var(--color-text-secondary)' }}>–</span>
-                <input
-                    type="date"
-                    value={toDateInputValue(range.to)}
-                    min={toDateInputValue(range.from)}
-                    max={todayInputValue}
-                    onChange={e => handleCustomChange('to', e.target.value)}
-                    style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg)', color: 'var(--color-text)', fontSize: '13px' }}
-                />
-            </div>
+            )}
+
+            <button onClick={() => setPreset('custom')} style={pickerButtonStyle(preset === 'custom')}>
+                Personalizado
+            </button>
+            {preset === 'custom' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <input
+                        type="date"
+                        value={toDateInputValue(range.from)}
+                        max={toDateInputValue(range.to)}
+                        onChange={e => handleCustomChange('from', e.target.value)}
+                        style={pickerInputStyle}
+                    />
+                    <span style={{ color: 'var(--color-text-secondary)' }}>–</span>
+                    <input
+                        type="date"
+                        value={toDateInputValue(range.to)}
+                        min={toDateInputValue(range.from)}
+                        max={todayInputValue}
+                        onChange={e => handleCustomChange('to', e.target.value)}
+                        style={pickerInputStyle}
+                    />
+                </div>
+            )}
         </div>
     );
 }
@@ -122,7 +172,6 @@ export default function Reports() {
     const [totalIncome, setTotalIncome] = useState(0);
     const [paymentMethods, setPaymentMethods] = useState<Record<string, number>>({});
     const [activeMembers, setActiveMembers] = useState(0);
-    const [range, setRange] = useState<DateRange>(() => presetRange('7d'));
 
     const loadData = useCallback(async () => {
         setLoading(true);
@@ -192,32 +241,23 @@ export default function Reports() {
                 </div>
             </div>
 
-            {/* Date Range Picker - controls the two daily-granularity sections below */}
-            <div style={{ marginTop: 'var(--spacing-xl)', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-text-secondary)', fontSize: '14px' }}>
-                    <Calendar size={16} /> Periodo:
-                </span>
-                <DateRangePicker range={range} onChange={setRange} />
-            </div>
-
-            {/* Accesos Section */}
-            <div style={{ marginTop: 'var(--spacing-lg)' }}>
-                <AttendanceShiftChart range={range} />
-            </div>
-
-            {/* Daily Summary Section */}
+            {/* Accesos Section - has its own independent date range picker */}
             <div style={{ marginTop: 'var(--spacing-xl)' }}>
-                <h3>Resumen Diario (Ventas y Asistencia)</h3>
-                <DailyReportTable range={range} />
+                <AttendanceShiftChart />
             </div>
 
-            {/* Monthly Summary Section - independent rolling 6-month trend, not affected by the picker above */}
+            {/* Daily Summary Section - has its own independent date range picker */}
+            <div style={{ marginTop: 'var(--spacing-xl)' }}>
+                <DailyReportTable />
+            </div>
+
+            {/* Monthly Summary Section - independent rolling 6-month trend */}
             <div style={{ marginTop: 'var(--spacing-xl)' }}>
                 <h3>Resumen Mensual (Últimos 6 Meses)</h3>
                 <MonthlyReportTable />
             </div>
 
-            {/* Shift History Section - independent audit log of the last closed shifts, not affected by the picker above */}
+            {/* Shift History Section - independent audit log of the last closed shifts */}
             <div style={{ marginTop: 'var(--spacing-xl)' }}>
                 <h3>Historial de Cortes de Caja (Últimos 20)</h3>
                 <ShiftHistoryTable />
@@ -226,7 +266,8 @@ export default function Reports() {
     );
 }
 
-function AttendanceShiftChart({ range }: { range: DateRange }) {
+function AttendanceShiftChart() {
+    const [range, setRange] = useState<DateRange>(() => quickPresetRange('7d'));
     const [data, setData] = useState<{ date: string; matutino: number; vespertino: number }[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -238,8 +279,6 @@ function AttendanceShiftChart({ range }: { range: DateRange }) {
         });
     }, [range]);
 
-    if (loading) return <div>Cargando accesos...</div>;
-
     const formattedData = data.map(d => ({
         ...d,
         // force midday to avoid timezone issues when converting to date string
@@ -247,24 +286,35 @@ function AttendanceShiftChart({ range }: { range: DateRange }) {
     }));
 
     return (
-        <div style={{ backgroundColor: 'var(--color-card)', padding: 'var(--spacing-xl)', borderRadius: 'var(--radius-lg)', height: '400px' }}>
-            <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: 'var(--spacing-lg)' }}>
-                <Users color="var(--color-primary)" /> Accesos por Turno
-            </h3>
-            <ResponsiveContainer width="100%" height="85%">
-                <RechartsBarChart data={formattedData}>
-                    <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
-                    <XAxis dataKey="displayDate" stroke="var(--color-text-secondary)" fontSize={12} />
-                    <YAxis stroke="var(--color-text-secondary)" fontSize={12} />
-                    <Tooltip 
-                        contentStyle={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: '8px' }}
-                        itemStyle={{ color: 'var(--color-text)' }}
-                    />
-                    <Legend />
-                    <Bar dataKey="matutino" name="Matutino" fill="var(--color-warning)" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="vespertino" name="Vespertino" fill="var(--color-primary)" radius={[4, 4, 0, 0]} />
-                </RechartsBarChart>
-            </ResponsiveContainer>
+        <div style={{ backgroundColor: 'var(--color-card)', padding: 'var(--spacing-xl)', borderRadius: 'var(--radius-lg)', minHeight: '440px', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: 'var(--spacing-lg)' }}>
+                <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: 0 }}>
+                    <Users color="var(--color-primary)" /> Accesos por Turno
+                </h3>
+                <DateRangePicker range={range} onChange={setRange} />
+            </div>
+            {loading ? (
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)' }}>
+                    Cargando accesos...
+                </div>
+            ) : (
+                <div style={{ flex: 1, minHeight: 0 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                        <RechartsBarChart data={formattedData}>
+                            <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
+                            <XAxis dataKey="displayDate" stroke="var(--color-text-secondary)" fontSize={12} />
+                            <YAxis stroke="var(--color-text-secondary)" fontSize={12} />
+                            <Tooltip
+                                contentStyle={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: '8px' }}
+                                itemStyle={{ color: 'var(--color-text)' }}
+                            />
+                            <Legend />
+                            <Bar dataKey="matutino" name="Matutino" fill="var(--color-warning)" radius={[4, 4, 0, 0]} />
+                            <Bar dataKey="vespertino" name="Vespertino" fill="var(--color-primary)" radius={[4, 4, 0, 0]} />
+                        </RechartsBarChart>
+                    </ResponsiveContainer>
+                </div>
+            )}
         </div>
     );
 }
@@ -353,7 +403,8 @@ function ShiftHistoryTable() {
     );
 }
 
-function DailyReportTable({ range }: { range: DateRange }) {
+function DailyReportTable() {
+    const [range, setRange] = useState<DateRange>(() => quickPresetRange('7d'));
     const [data, setData] = useState<DailyReportRow[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -365,54 +416,64 @@ function DailyReportTable({ range }: { range: DateRange }) {
         });
     }, [range]);
 
-    if (loading) return <div>Cargando resumen diario...</div>;
-    if (data.length === 0) return <div style={{ fontStyle: 'italic', color: 'var(--color-text-secondary)' }}>No hay datos disponibles.</div>;
-
     // Obtener todos los tipos de planes únicos para renderizar las columnas dinámicamente
     const allPlanNames = Array.from(new Set(data.flatMap(row => Object.keys(row.paymentsByPlan))));
 
     return (
-        <div style={{ overflowX: 'auto', backgroundColor: 'var(--color-card)', borderRadius: '12px', padding: '10px' }}>
-            <p style={{ padding: '0 12px', margin: '4px 0 10px', fontSize: '12px', color: 'var(--color-text-secondary)' }}>
-                Las columnas de plan muestran <b>número de pagos</b>, no montos — solo "Cortes Entregados" es dinero.
-            </p>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '800px', fontSize: '14px' }}>
-                <thead>
-                    <tr style={{ textAlign: 'left', color: 'var(--color-text-secondary)', borderBottom: '1px solid var(--color-border)', backgroundColor: 'rgba(255,255,255,0.02)' }}>
-                        <th style={{ padding: '12px' }}>Día</th>
-                        <th style={{ padding: '12px' }}>Turno Mat.</th>
-                        <th style={{ padding: '12px' }}>Turno Vesp.</th>
-                        <th style={{ padding: '12px', fontWeight: 'bold' }}>Total Asistentes</th>
-                        {allPlanNames.map(planName => (
-                            <th key={planName} style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>
-                                {planName} (pagos)
-                            </th>
-                        ))}
-                        <th style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>Cortes Entregados</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {data.map(row => {
-                        const displayDate = new Date(`${row.date}T12:00:00Z`).toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short' });
-                        return (
-                            <tr key={row.date} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                                <td style={{ padding: '12px', textTransform: 'capitalize' }}>{displayDate}</td>
-                                <td style={{ padding: '12px' }}>{row.attendeesMorning}</td>
-                                <td style={{ padding: '12px' }}>{row.attendeesEvening}</td>
-                                <td style={{ padding: '12px', fontWeight: 'bold' }}>{row.totalAttendees}</td>
+        <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: 'var(--spacing-md)' }}>
+                <h3 style={{ margin: 0 }}>Resumen Diario (Ventas y Asistencia)</h3>
+                <DateRangePicker range={range} onChange={setRange} />
+            </div>
+
+            {loading ? (
+                <div style={{ padding: '20px', color: 'var(--color-text-secondary)' }}>Cargando resumen diario...</div>
+            ) : data.length === 0 ? (
+                <div style={{ padding: '20px', fontStyle: 'italic', color: 'var(--color-text-secondary)' }}>No hay datos disponibles.</div>
+            ) : (
+                <div style={{ overflowX: 'auto', backgroundColor: 'var(--color-card)', borderRadius: '12px', padding: '10px' }}>
+                    <p style={{ padding: '0 12px', margin: '4px 0 10px', fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                        Las columnas de plan muestran <b>número de pagos</b>, no montos — solo "Cortes Entregados" es dinero.
+                    </p>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '800px', fontSize: '14px' }}>
+                        <thead>
+                            <tr style={{ textAlign: 'left', color: 'var(--color-text-secondary)', borderBottom: '1px solid var(--color-border)', backgroundColor: 'rgba(255,255,255,0.02)' }}>
+                                <th style={{ padding: '12px' }}>Día</th>
+                                <th style={{ padding: '12px' }}>Turno Mat.</th>
+                                <th style={{ padding: '12px' }}>Turno Vesp.</th>
+                                <th style={{ padding: '12px', fontWeight: 'bold' }}>Total Asistentes</th>
                                 {allPlanNames.map(planName => (
-                                    <td key={planName} style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>
-                                        {row.paymentsByPlan[planName] || 0}
-                                    </td>
+                                    <th key={planName} style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>
+                                        {planName} (pagos)
+                                    </th>
                                 ))}
-                                <td style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)', color: 'var(--color-success)', fontWeight: 'bold' }}>
-                                    ${formatMoney(row.totalShiftReturns)}
-                                </td>
+                                <th style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>Cortes Entregados</th>
                             </tr>
-                        );
-                    })}
-                </tbody>
-            </table>
+                        </thead>
+                        <tbody>
+                            {data.map(row => {
+                                const displayDate = new Date(`${row.date}T12:00:00Z`).toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short' });
+                                return (
+                                    <tr key={row.date} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                        <td style={{ padding: '12px', textTransform: 'capitalize' }}>{displayDate}</td>
+                                        <td style={{ padding: '12px' }}>{row.attendeesMorning}</td>
+                                        <td style={{ padding: '12px' }}>{row.attendeesEvening}</td>
+                                        <td style={{ padding: '12px', fontWeight: 'bold' }}>{row.totalAttendees}</td>
+                                        {allPlanNames.map(planName => (
+                                            <td key={planName} style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>
+                                                {row.paymentsByPlan[planName] || 0}
+                                            </td>
+                                        ))}
+                                        <td style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)', color: 'var(--color-success)', fontWeight: 'bold' }}>
+                                            ${formatMoney(row.totalShiftReturns)}
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+            )}
         </div>
     );
 }
