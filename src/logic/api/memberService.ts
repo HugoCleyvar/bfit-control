@@ -390,3 +390,58 @@ export async function getActiveMembersByPlan(): Promise<PlanMemberCount[]> {
         .sort((a, b) => b.count - a.count);
 }
 
+export interface UnpaidAttendanceAlert {
+    memberId: string;
+    nombre: string;
+    apellido: string;
+    telefono?: string;
+    subscriptionEndDate: string;
+    visitDates: string[]; // attendance dates after the subscription had already expired
+}
+
+// Members who are currently 'vencida' and were let in (attendance.permitido = true) on a date
+// AFTER their subscription had already expired. Pack/visit-plan members are excluded: the
+// check-in flow legitimately grants them access via visitas_disponibles regardless of
+// subscription status, so flagging them here would just be noise, not a real anomaly.
+export async function getExpiredMembersWithUnpaidAttendance(): Promise<UnpaidAttendanceAlert[]> {
+    const all = await getAllMembersWithStatus();
+
+    const expired = all.filter((m): m is MemberWithStatus & { subscriptionEndDate: string } => {
+        if (m.subscriptionStatus !== 'vencida' || !m.subscriptionEndDate) return false;
+        const planName = (m.currentPlanName || '').toLowerCase();
+        const isPackPlan = planName.includes('visita') || planName.includes('paquete');
+        return !isPackPlan;
+    });
+
+    if (expired.length === 0) return [];
+
+    const ids = expired.map(m => m.id);
+    const attendance = await fetchAllRows<{ usuario_id: string; fecha_hora: string }>((from, to) =>
+        supabase
+            .from('attendance')
+            .select('usuario_id, fecha_hora')
+            .eq('permitido', true)
+            .in('usuario_id', ids)
+            .range(from, to)
+    );
+
+    const visitsByMember: Record<string, string[]> = {};
+    attendance.forEach(a => {
+        (visitsByMember[a.usuario_id] ||= []).push(a.fecha_hora);
+    });
+
+    return expired
+        .map(m => ({
+            memberId: m.id,
+            nombre: m.nombre,
+            apellido: m.apellido,
+            telefono: m.telefono,
+            subscriptionEndDate: m.subscriptionEndDate,
+            visitDates: (visitsByMember[m.id] || [])
+                .filter(v => new Date(v) > new Date(m.subscriptionEndDate))
+                .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())
+        }))
+        .filter(x => x.visitDates.length > 0)
+        .sort((a, b) => b.visitDates.length - a.visitDates.length);
+}
+

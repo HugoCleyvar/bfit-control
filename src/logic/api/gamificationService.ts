@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { startOfLocalDay, endOfLocalDay } from '../../domain/dateUtils';
 
 
 export interface ExpiringMember {
@@ -19,11 +20,11 @@ export interface ExpiringMember {
 
 export async function getExpiringMembers(daysThreshold = 5): Promise<ExpiringMember[]> {
     const today = new Date();
-    const futureDate = new Date();
-    futureDate.setDate(today.getDate() + daysThreshold);
-
-    const todayStr = today.toISOString().split('T')[0];
-    const futureStr = futureDate.toISOString().split('T')[0];
+    // Anchor at local midnight/end-of-day so the UTC instant sent to the query lines up with
+    // "today" and "N days from now" in local terms, instead of a UTC snapshot of "now" that
+    // can roll the boundary a day off depending on the time of day (see financeService.ts).
+    const todayStart = startOfLocalDay(today);
+    const futureEnd = endOfLocalDay(new Date(today.getFullYear(), today.getMonth(), today.getDate() + daysThreshold));
 
     // Query Subscriptions expiring soon
     // We join with profiles and plans
@@ -38,8 +39,8 @@ export async function getExpiringMembers(daysThreshold = 5): Promise<ExpiringMem
             plans:plan_id (nombre)
         `)
         .eq('estatus', 'activa')
-        .gte('fecha_vencimiento', todayStr)
-        .lte('fecha_vencimiento', futureStr)
+        .gte('fecha_vencimiento', todayStart.toISOString())
+        .lte('fecha_vencimiento', futureEnd.toISOString())
         .order('fecha_vencimiento', { ascending: true });
 
     if (error) {

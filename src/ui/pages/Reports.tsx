@@ -1,18 +1,24 @@
 import { useEffect, useState, useCallback } from 'react';
-import type { CSSProperties } from 'react';
-import { getIncomeSummary, getShiftHistory, getDailyPerformanceSummary, getMonthlyPerformanceSummary, getSalesByCollaborator } from '../../logic/api/financeService';
-import { getActiveMemberCount, getActiveMembersByPlan, getNewMembersByMonth, getChurnedMembers } from '../../logic/api/memberService';
+import type { CSSProperties, ReactNode } from 'react';
+import { getIncomeSummary, getShiftHistory, getDailyPerformanceSummary, getMonthlyPerformanceSummary, getRevenueByShiftType } from '../../logic/api/financeService';
+import { getActiveMemberCount, getActiveMembersByPlan, getNewMembersByMonth, getChurnedMembers, getExpiredMembersWithUnpaidAttendance } from '../../logic/api/memberService';
 import { getDailyAttendanceByShift } from '../../logic/api/attendanceService';
+import { getExpiringMembers } from '../../logic/api/gamificationService';
 import { startOfLocalDay, endOfLocalDay } from '../../domain/dateUtils';
-import type { DailyReportRow, MonthlyReportRow, ShiftHistoryRow, CollaboratorSales } from '../../logic/api/financeService';
-import type { PlanMemberCount, NewMembersRow, ChurnedMember } from '../../logic/api/memberService';
+import type { DailyReportRow, MonthlyReportRow, ShiftHistoryRow, ShiftTypeRevenue } from '../../logic/api/financeService';
+import type { PlanMemberCount, NewMembersRow, ChurnedMember, UnpaidAttendanceAlert } from '../../logic/api/memberService';
+import type { ExpiringMember } from '../../logic/api/gamificationService';
 
-import { BarChart, PieChart, TrendingUp, Users, UserPlus, UserMinus, Briefcase, Tag } from 'lucide-react';
+import { TrendingUp, Users, Clock, Tag, UserPlus, UserMinus, AlertTriangle, CalendarClock } from 'lucide-react';
 import { BarChart as RechartsBarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 function formatMoney(amount: number): string {
     return amount.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+
+// ---------------------------------------------------------------------------
+// Shared date range picker (used by the "diario" sub-sections and by Membresías)
+// ---------------------------------------------------------------------------
 
 interface DateRange {
     from: Date;
@@ -168,26 +174,46 @@ function DateRangePicker({ range, onChange }: { range: DateRange; onChange: (ran
     );
 }
 
+// ---------------------------------------------------------------------------
+// Small shared UI bits
+// ---------------------------------------------------------------------------
+
+function sectionCardStyle(): CSSProperties {
+    return { backgroundColor: 'var(--color-card)', padding: 'var(--spacing-xl)', borderRadius: 'var(--radius-lg)' };
+}
+
+function monthLabel(monthStr: string): string {
+    const [yyyy, mm] = monthStr.split('-');
+    return new Date(Number(yyyy), Number(mm) - 1, 1).toLocaleDateString('es-MX', { month: 'short', year: '2-digit' });
+}
+
+// ---------------------------------------------------------------------------
+// Main page: KPI strip + tabs
+// ---------------------------------------------------------------------------
+
+type ReportTab = 'resumen' | 'cortes' | 'membresias';
+
+const TABS: { key: ReportTab; label: string }[] = [
+    { key: 'resumen', label: 'Resumen' },
+    { key: 'cortes', label: 'Cortes de Caja' },
+    { key: 'membresias', label: 'Membresías' }
+];
+
 export default function Reports() {
     const [loading, setLoading] = useState(true);
     const [totalIncome, setTotalIncome] = useState(0);
-    const [paymentMethods, setPaymentMethods] = useState<Record<string, number>>({});
     const [activeMembers, setActiveMembers] = useState(0);
-    const [membersByPlan, setMembersByPlan] = useState<PlanMemberCount[]>([]);
+    const [activeTab, setActiveTab] = useState<ReportTab>('resumen');
 
     const loadData = useCallback(async () => {
         setLoading(true);
-        const [incomeSummary, activeCount, planCounts] = await Promise.all([
+        const [incomeSummary, activeCount] = await Promise.all([
             getIncomeSummary(),
-            getActiveMemberCount(),
-            getActiveMembersByPlan()
+            getActiveMemberCount()
         ]);
 
         setTotalIncome(incomeSummary.total);
-        setPaymentMethods(incomeSummary.byMethod);
         setActiveMembers(activeCount);
-        setMembersByPlan(planCounts);
-
         setLoading(false);
     }, []);
 
@@ -201,169 +227,412 @@ export default function Reports() {
         <div className="page-container">
             <h2>Reportes y Métricas</h2>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 'var(--spacing-lg)', marginTop: 'var(--spacing-lg)' }}>
-
-                {/* Income Card */}
-                <div style={{ backgroundColor: 'var(--color-card)', padding: 'var(--spacing-xl)', borderRadius: 'var(--radius-lg)' }}>
-                    <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: 'var(--spacing-lg)' }}>
-                        <TrendingUp color="var(--color-success)" /> Ingresos Totales
-                    </h3>
-                    <div style={{ fontSize: '32px', fontWeight: 'bold' }}>
-                        ${formatMoney(totalIncome)}
-                    </div>
-                    <p style={{ color: 'var(--color-text-secondary)', marginTop: '8px' }}>
-                        Histórico acumulado
-                    </p>
-                </div>
-
-                {/* Methods Card */}
-                <div style={{ backgroundColor: 'var(--color-card)', padding: 'var(--spacing-xl)', borderRadius: 'var(--radius-lg)' }}>
-                    <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: 'var(--spacing-lg)' }}>
-                        <PieChart color="var(--color-accent)" /> Desglose por Método
-                    </h3>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                        {Object.entries(paymentMethods).map(([method, amount]) => (
-                            <div key={method} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                <span style={{ textTransform: 'capitalize' }}>{method}</span>
-                                <b>${formatMoney(amount)}</b>
-                            </div>
-                        ))}
+            {/* Always-visible KPI strip */}
+            <div style={{ display: 'flex', gap: 'var(--spacing-lg)', marginTop: 'var(--spacing-lg)', flexWrap: 'wrap' }}>
+                <div style={{ ...sectionCardStyle(), flex: '1 1 220px', display: 'flex', alignItems: 'center', gap: '14px' }}>
+                    <TrendingUp color="var(--color-success)" size={28} />
+                    <div>
+                        <div style={{ fontSize: '24px', fontWeight: 'bold' }}>${formatMoney(totalIncome)}</div>
+                        <div style={{ color: 'var(--color-text-secondary)', fontSize: '13px' }}>Ingresos históricos totales</div>
                     </div>
                 </div>
-
-                {/* Members KPI */}
-                <div style={{ backgroundColor: 'var(--color-card)', padding: 'var(--spacing-xl)', borderRadius: 'var(--radius-lg)' }}>
-                    <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: 'var(--spacing-lg)' }}>
-                        <BarChart color="var(--color-warning)" /> Membresías
-                    </h3>
-                    <div style={{ fontSize: '32px', fontWeight: 'bold' }}>
-                        {activeMembers}
+                <div style={{ ...sectionCardStyle(), flex: '1 1 220px', display: 'flex', alignItems: 'center', gap: '14px' }}>
+                    <Users color="var(--color-primary)" size={28} />
+                    <div>
+                        <div style={{ fontSize: '24px', fontWeight: 'bold' }}>{activeMembers}</div>
+                        <div style={{ color: 'var(--color-text-secondary)', fontSize: '13px' }}>Miembros activos</div>
                     </div>
-                    <p style={{ color: 'var(--color-text-secondary)', marginTop: '8px' }}>
-                        Miembros Activos
-                    </p>
+                </div>
+            </div>
+
+            {/* Tabs */}
+            <div style={{ display: 'flex', gap: '4px', marginTop: 'var(--spacing-xl)', borderBottom: '1px solid var(--color-border)' }}>
+                {TABS.map(tab => (
+                    <button
+                        key={tab.key}
+                        onClick={() => setActiveTab(tab.key)}
+                        style={{
+                            padding: '12px 20px',
+                            background: 'transparent',
+                            border: 'none',
+                            borderBottom: activeTab === tab.key ? '2px solid var(--color-primary)' : '2px solid transparent',
+                            color: activeTab === tab.key ? 'var(--color-text)' : 'var(--color-text-secondary)',
+                            fontWeight: activeTab === tab.key ? 'bold' : 'normal',
+                            cursor: 'pointer',
+                            fontSize: '15px'
+                        }}
+                    >
+                        {tab.label}
+                    </button>
+                ))}
+            </div>
+
+            <div style={{ marginTop: 'var(--spacing-xl)' }}>
+                {activeTab === 'resumen' && <ResumenTab />}
+                {activeTab === 'cortes' && <CortesTab />}
+                {activeTab === 'membresias' && <MembresiasTab />}
+            </div>
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Tab: Resumen - Asistencia / Ingresos / Por Turno / Por Membresía
+// ---------------------------------------------------------------------------
+
+function ResumenTab() {
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-xl)' }}>
+            <AttendanceSection />
+            <IncomeSection />
+            <ShiftTypeSection />
+            <MembershipTypeSection />
+        </div>
+    );
+}
+
+function sectionHeading(icon: ReactNode, title: string) {
+    return (
+        <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: 'var(--spacing-md)' }}>
+            {icon} {title}
+        </h3>
+    );
+}
+
+function AttendanceSection() {
+    const [range, setRange] = useState<DateRange>(() => quickPresetRange('7d'));
+    const [daily, setDaily] = useState<{ date: string; matutino: number; vespertino: number }[]>([]);
+    const [monthly, setMonthly] = useState<MonthlyReportRow[]>([]);
+    const [loadingDaily, setLoadingDaily] = useState(true);
+    const [loadingMonthly, setLoadingMonthly] = useState(true);
+
+    useEffect(() => {
+        setLoadingDaily(true);
+        getDailyAttendanceByShift(range.from, range.to).then(res => {
+            setDaily(res);
+            setLoadingDaily(false);
+        });
+    }, [range]);
+
+    useEffect(() => {
+        getMonthlyPerformanceSummary(12).then(res => {
+            setMonthly([...res].reverse());
+            setLoadingMonthly(false);
+        });
+    }, []);
+
+    const dailyFormatted = daily.map(d => ({
+        ...d,
+        displayDate: new Date(`${d.date}T12:00:00Z`).toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric' })
+    }));
+
+    const monthlyFormatted = monthly.map(row => ({ displayDate: monthLabel(row.monthStr), total: row.totalAttendees }));
+
+    return (
+        <section>
+            {sectionHeading(<Users color="var(--color-primary)" />, 'Asistencia')}
+
+            <div style={{ ...sectionCardStyle(), marginBottom: 'var(--spacing-md)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: 'var(--spacing-md)' }}>
+                    <h4 style={{ margin: 0, color: 'var(--color-text-secondary)', fontWeight: 'normal' }}>Diario</h4>
+                    <DateRangePicker range={range} onChange={setRange} />
+                </div>
+                {loadingDaily ? (
+                    <div style={{ padding: '30px', textAlign: 'center', color: 'var(--color-text-secondary)' }}>Cargando...</div>
+                ) : (
+                    <div style={{ height: '300px' }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                            <RechartsBarChart data={dailyFormatted}>
+                                <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
+                                <XAxis dataKey="displayDate" stroke="var(--color-text-secondary)" fontSize={12} />
+                                <YAxis stroke="var(--color-text-secondary)" fontSize={12} allowDecimals={false} />
+                                <Tooltip contentStyle={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: '8px' }} itemStyle={{ color: 'var(--color-text)' }} />
+                                <Legend />
+                                <Bar dataKey="matutino" name="Matutino" fill="var(--color-warning)" radius={[4, 4, 0, 0]} />
+                                <Bar dataKey="vespertino" name="Vespertino" fill="var(--color-primary)" radius={[4, 4, 0, 0]} />
+                            </RechartsBarChart>
+                        </ResponsiveContainer>
+                    </div>
+                )}
+            </div>
+
+            <div style={sectionCardStyle()}>
+                <h4 style={{ margin: '0 0 var(--spacing-md)', color: 'var(--color-text-secondary)', fontWeight: 'normal' }}>
+                    Mensual (últimos 12 meses - compara entre meses y, cuando haya suficiente historial, entre años)
+                </h4>
+                {loadingMonthly ? (
+                    <div style={{ padding: '30px', textAlign: 'center', color: 'var(--color-text-secondary)' }}>Cargando...</div>
+                ) : (
+                    <div style={{ height: '280px' }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                            <RechartsBarChart data={monthlyFormatted}>
+                                <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
+                                <XAxis dataKey="displayDate" stroke="var(--color-text-secondary)" fontSize={12} />
+                                <YAxis stroke="var(--color-text-secondary)" fontSize={12} allowDecimals={false} />
+                                <Tooltip contentStyle={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: '8px' }} itemStyle={{ color: 'var(--color-text)' }} />
+                                <Bar dataKey="total" name="Asistentes" fill="var(--color-primary)" radius={[4, 4, 0, 0]} />
+                            </RechartsBarChart>
+                        </ResponsiveContainer>
+                    </div>
+                )}
+            </div>
+        </section>
+    );
+}
+
+function IncomeSection() {
+    const [range, setRange] = useState<DateRange>(() => quickPresetRange('7d'));
+    const [daily, setDaily] = useState<DailyReportRow[]>([]);
+    const [monthly, setMonthly] = useState<MonthlyReportRow[]>([]);
+    const [methods, setMethods] = useState<Record<string, number>>({});
+    const [loadingDaily, setLoadingDaily] = useState(true);
+    const [loadingMonthly, setLoadingMonthly] = useState(true);
+
+    useEffect(() => {
+        setLoadingDaily(true);
+        getDailyPerformanceSummary(range.from, range.to).then(res => {
+            setDaily(res);
+            setLoadingDaily(false);
+        });
+    }, [range]);
+
+    useEffect(() => {
+        getMonthlyPerformanceSummary(12).then(res => {
+            setMonthly([...res].reverse());
+            setLoadingMonthly(false);
+        });
+    }, []);
+
+    useEffect(() => {
+        getIncomeSummary().then(res => setMethods(res.byMethod));
+    }, []);
+
+    const dailyFormatted = daily.map(d => ({
+        displayDate: new Date(`${d.date}T12:00:00Z`).toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric' }),
+        total: d.totalRevenue
+    }));
+
+    const monthlyFormatted = monthly.map(row => ({ displayDate: monthLabel(row.monthStr), total: row.totalRevenue }));
+
+    return (
+        <section>
+            {sectionHeading(<TrendingUp color="var(--color-success)" />, 'Ingresos')}
+
+            <div style={{ ...sectionCardStyle(), marginBottom: 'var(--spacing-md)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: 'var(--spacing-md)' }}>
+                    <h4 style={{ margin: 0, color: 'var(--color-text-secondary)', fontWeight: 'normal' }}>Diario</h4>
+                    <DateRangePicker range={range} onChange={setRange} />
+                </div>
+                {loadingDaily ? (
+                    <div style={{ padding: '30px', textAlign: 'center', color: 'var(--color-text-secondary)' }}>Cargando...</div>
+                ) : (
+                    <div style={{ height: '300px' }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                            <RechartsBarChart data={dailyFormatted}>
+                                <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
+                                <XAxis dataKey="displayDate" stroke="var(--color-text-secondary)" fontSize={12} />
+                                <YAxis stroke="var(--color-text-secondary)" fontSize={12} tickFormatter={v => `$${v}`} />
+                                <Tooltip
+                                    contentStyle={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: '8px' }}
+                                    itemStyle={{ color: 'var(--color-text)' }}
+                                    formatter={(v: number | string | undefined) => [`$${formatMoney(Number(v || 0))}`, 'Ingresos']}
+                                />
+                                <Bar dataKey="total" name="Ingresos" fill="var(--color-success)" radius={[4, 4, 0, 0]} />
+                            </RechartsBarChart>
+                        </ResponsiveContainer>
+                    </div>
+                )}
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 'var(--spacing-md)' }}>
+                <div style={sectionCardStyle()}>
+                    <h4 style={{ margin: '0 0 var(--spacing-md)', color: 'var(--color-text-secondary)', fontWeight: 'normal' }}>
+                        Mensual (últimos 12 meses)
+                    </h4>
+                    {loadingMonthly ? (
+                        <div style={{ padding: '30px', textAlign: 'center', color: 'var(--color-text-secondary)' }}>Cargando...</div>
+                    ) : (
+                        <div style={{ height: '260px' }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <RechartsBarChart data={monthlyFormatted}>
+                                    <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
+                                    <XAxis dataKey="displayDate" stroke="var(--color-text-secondary)" fontSize={12} />
+                                    <YAxis stroke="var(--color-text-secondary)" fontSize={12} tickFormatter={v => `$${v}`} />
+                                    <Tooltip
+                                        contentStyle={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: '8px' }}
+                                        itemStyle={{ color: 'var(--color-text)' }}
+                                        formatter={(v: number | string | undefined) => [`$${formatMoney(Number(v || 0))}`, 'Ingresos']}
+                                    />
+                                    <Bar dataKey="total" name="Ingresos" fill="var(--color-success)" radius={[4, 4, 0, 0]} />
+                                </RechartsBarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    )}
                 </div>
 
-                {/* Members by Plan Card */}
-                <div style={{ backgroundColor: 'var(--color-card)', padding: 'var(--spacing-xl)', borderRadius: 'var(--radius-lg)' }}>
-                    <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: 'var(--spacing-lg)' }}>
-                        <Tag color="var(--color-primary)" /> Miembros por Plan
-                    </h3>
-                    {membersByPlan.length === 0 ? (
-                        <p style={{ color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>Sin miembros activos.</p>
+                <div style={sectionCardStyle()}>
+                    <h4 style={{ margin: '0 0 var(--spacing-md)', color: 'var(--color-text-secondary)', fontWeight: 'normal' }}>
+                        Desglose por método (histórico)
+                    </h4>
+                    {Object.keys(methods).length === 0 ? (
+                        <p style={{ color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>Sin pagos registrados.</p>
                     ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                            {membersByPlan.map(({ planName, count }) => (
-                                <div key={planName} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                    <span>{planName}</span>
-                                    <b>{count}</b>
+                            {Object.entries(methods).map(([method, amount]) => (
+                                <div key={method} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                    <span style={{ textTransform: 'capitalize' }}>{method}</span>
+                                    <b>${formatMoney(amount)}</b>
                                 </div>
                             ))}
                         </div>
                     )}
                 </div>
             </div>
-
-            {/* Accesos Section - has its own independent date range picker */}
-            <div style={{ marginTop: 'var(--spacing-xl)' }}>
-                <AttendanceShiftChart />
-            </div>
-
-            {/* Daily Summary Section - has its own independent date range picker */}
-            <div style={{ marginTop: 'var(--spacing-xl)' }}>
-                <DailyReportTable />
-            </div>
-
-            {/* Monthly Revenue by Plan - independent rolling 6-month trend, pure sum of payments (never net of expenses/retiros) */}
-            <div style={{ marginTop: 'var(--spacing-xl)' }}>
-                <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <TrendingUp color="var(--color-success)" /> Ingresos Mensuales por Plan (Últimos 6 Meses)
-                </h3>
-                <MonthlyRevenueTable />
-            </div>
-
-            {/* Monthly Summary Section - independent rolling 6-month trend */}
-            <div style={{ marginTop: 'var(--spacing-xl)' }}>
-                <h3>Resumen Mensual (Últimos 6 Meses)</h3>
-                <MonthlyReportTable />
-            </div>
-
-            {/* New Members Section - independent rolling 6-month trend */}
-            <div style={{ marginTop: 'var(--spacing-xl)' }}>
-                <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <UserPlus color="var(--color-success)" /> Altas Nuevas (Últimos 6 Meses)
-                </h3>
-                <NewMembersChart />
-            </div>
-
-            {/* Churn Section - has its own independent date range picker */}
-            <div style={{ marginTop: 'var(--spacing-xl)' }}>
-                <ChurnedMembersTable />
-            </div>
-
-            {/* Sales by Collaborator Section - has its own independent date range picker */}
-            <div style={{ marginTop: 'var(--spacing-xl)' }}>
-                <SalesByCollaboratorTable />
-            </div>
-
-            {/* Shift History Section - independent audit log of the last closed shifts */}
-            <div style={{ marginTop: 'var(--spacing-xl)' }}>
-                <h3>Historial de Cortes de Caja (Últimos 20)</h3>
-                <ShiftHistoryTable />
-            </div>
-        </div>
+        </section>
     );
 }
 
-function AttendanceShiftChart() {
-    const [range, setRange] = useState<DateRange>(() => quickPresetRange('7d'));
-    const [data, setData] = useState<{ date: string; matutino: number; vespertino: number }[]>([]);
+function ShiftTypeSection() {
+    const [range, setRange] = useState<DateRange>(() => quickPresetRange('30d'));
+    const [revenue, setRevenue] = useState<ShiftTypeRevenue>({ matutino: 0, vespertino: 0 });
+    const [attendance, setAttendance] = useState<{ matutino: number; vespertino: number }>({ matutino: 0, vespertino: 0 });
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         setLoading(true);
-        getDailyAttendanceByShift(range.from, range.to).then(res => {
-            setData(res);
+        Promise.all([
+            getRevenueByShiftType(range.from, range.to),
+            getDailyAttendanceByShift(range.from, range.to)
+        ]).then(([rev, byDay]) => {
+            setRevenue(rev);
+            setAttendance({
+                matutino: byDay.reduce((sum, d) => sum + d.matutino, 0),
+                vespertino: byDay.reduce((sum, d) => sum + d.vespertino, 0)
+            });
             setLoading(false);
         });
     }, [range]);
 
-    const formattedData = data.map(d => ({
-        ...d,
-        // force midday to avoid timezone issues when converting to date string
-        displayDate: new Date(`${d.date}T12:00:00Z`).toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric' })
-    }));
-
     return (
-        <div style={{ backgroundColor: 'var(--color-card)', padding: 'var(--spacing-xl)', borderRadius: 'var(--radius-lg)', minHeight: '440px', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: 'var(--spacing-lg)' }}>
-                <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: 0 }}>
-                    <Users color="var(--color-primary)" /> Accesos por Turno
-                </h3>
+        <section>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: 'var(--spacing-md)' }}>
+                {sectionHeading(<Clock color="var(--color-warning)" />, 'Por Turno')}
                 <DateRangePicker range={range} onChange={setRange} />
             </div>
             {loading ? (
-                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)' }}>
-                    Cargando accesos...
-                </div>
+                <div style={{ padding: '30px', textAlign: 'center', color: 'var(--color-text-secondary)' }}>Cargando...</div>
             ) : (
-                <div style={{ flex: 1, minHeight: 0 }}>
-                    <ResponsiveContainer width="100%" height="100%">
-                        <RechartsBarChart data={formattedData}>
-                            <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
-                            <XAxis dataKey="displayDate" stroke="var(--color-text-secondary)" fontSize={12} />
-                            <YAxis stroke="var(--color-text-secondary)" fontSize={12} />
-                            <Tooltip
-                                contentStyle={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: '8px' }}
-                                itemStyle={{ color: 'var(--color-text)' }}
-                            />
-                            <Legend />
-                            <Bar dataKey="matutino" name="Matutino" fill="var(--color-warning)" radius={[4, 4, 0, 0]} />
-                            <Bar dataKey="vespertino" name="Vespertino" fill="var(--color-primary)" radius={[4, 4, 0, 0]} />
-                        </RechartsBarChart>
-                    </ResponsiveContainer>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 'var(--spacing-md)' }}>
+                    <div style={{ ...sectionCardStyle(), borderLeft: '4px solid var(--color-warning)' }}>
+                        <h4 style={{ margin: '0 0 var(--spacing-md)' }}>Matutino</h4>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                            <span style={{ color: 'var(--color-text-secondary)' }}>Asistencias</span>
+                            <b>{attendance.matutino}</b>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: 'var(--color-text-secondary)' }}>Ingresos</span>
+                            <b style={{ color: 'var(--color-success)' }}>${formatMoney(revenue.matutino)}</b>
+                        </div>
+                    </div>
+                    <div style={{ ...sectionCardStyle(), borderLeft: '4px solid var(--color-primary)' }}>
+                        <h4 style={{ margin: '0 0 var(--spacing-md)' }}>Vespertino</h4>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                            <span style={{ color: 'var(--color-text-secondary)' }}>Asistencias</span>
+                            <b>{attendance.vespertino}</b>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: 'var(--color-text-secondary)' }}>Ingresos</span>
+                            <b style={{ color: 'var(--color-success)' }}>${formatMoney(revenue.vespertino)}</b>
+                        </div>
+                    </div>
                 </div>
             )}
+        </section>
+    );
+}
+
+function MembershipTypeSection() {
+    const [planCounts, setPlanCounts] = useState<PlanMemberCount[]>([]);
+    const [monthly, setMonthly] = useState<MonthlyReportRow[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        Promise.all([
+            getActiveMembersByPlan(),
+            getMonthlyPerformanceSummary(12)
+        ]).then(([plans, months]) => {
+            setPlanCounts(plans);
+            setMonthly(months);
+            setLoading(false);
+        });
+    }, []);
+
+    const allPlanNames = Array.from(new Set(monthly.flatMap(row => Object.keys(row.revenueByPlan))));
+
+    return (
+        <section>
+            {sectionHeading(<Tag color="var(--color-accent)" />, 'Por Tipo de Membresía')}
+            {loading ? (
+                <div style={{ padding: '30px', textAlign: 'center', color: 'var(--color-text-secondary)' }}>Cargando...</div>
+            ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) 2fr', gap: 'var(--spacing-md)', alignItems: 'start' }}>
+                    <div style={sectionCardStyle()}>
+                        <h4 style={{ margin: '0 0 var(--spacing-md)', color: 'var(--color-text-secondary)', fontWeight: 'normal' }}>Miembros activos</h4>
+                        {planCounts.length === 0 ? (
+                            <p style={{ color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>Sin miembros activos.</p>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                {planCounts.map(({ planName, count }) => (
+                                    <div key={planName} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                        <span>{planName}</span>
+                                        <b>{count}</b>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    <div style={{ overflowX: 'auto', backgroundColor: 'var(--color-card)', borderRadius: '12px', padding: '10px' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '600px', fontSize: '14px' }}>
+                            <thead>
+                                <tr style={{ textAlign: 'left', color: 'var(--color-text-secondary)', borderBottom: '1px solid var(--color-border)' }}>
+                                    <th style={{ padding: '12px' }}>Mes</th>
+                                    <th style={{ padding: '12px', fontWeight: 'bold' }}>Total</th>
+                                    {allPlanNames.map(planName => (
+                                        <th key={planName} style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>{planName}</th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {monthly.map(row => (
+                                    <tr key={row.monthStr} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                        <td style={{ padding: '12px', textTransform: 'capitalize' }}>{monthLabel(row.monthStr)}</td>
+                                        <td style={{ padding: '12px', fontWeight: 'bold', color: 'var(--color-success)' }}>${formatMoney(row.totalRevenue)}</td>
+                                        {allPlanNames.map(planName => (
+                                            <td key={planName} style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>
+                                                ${formatMoney(row.revenueByPlan[planName] || 0)}
+                                            </td>
+                                        ))}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+        </section>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Tab: Cortes de Caja
+// ---------------------------------------------------------------------------
+
+function CortesTab() {
+    return (
+        <div>
+            <h3 style={{ marginBottom: 'var(--spacing-md)' }}>Historial de Cortes de Caja (Últimos 20)</h3>
+            <ShiftHistoryTable />
         </div>
     );
 }
@@ -408,11 +677,9 @@ function ShiftHistoryTable() {
                         // shift.total_efectivo itself gets overwritten with the counted amount on close)
                         const expected = shift.total_teorico;
 
-                        // Calculate Sales
                         // Sales = Expected (Total Cash in Hand theoretical) - Initial Cash + Withdrawals
                         const sales = (expected) - Number(shift.monto_inicial || 0) + Number(shift.retiros || 0);
 
-                        // Calculated declared from 'desglose_cierre'
                         let declared = 0;
                         if (shift.desglose_cierre) {
                             try {
@@ -434,9 +701,7 @@ function ShiftHistoryTable() {
                                 <td style={{ padding: '12px', fontWeight: 'bold' }}>{shift.profiles?.nombre || 'N/A'}</td>
                                 <td style={{ padding: '12px' }}>{durationHrs} hrs</td>
                                 <td style={{ padding: '12px' }}>${formatMoney(Number(shift.monto_inicial || 0))}</td>
-                                <td style={{ padding: '12px', color: 'var(--color-success)' }}>
-                                    ${formatMoney(sales)}
-                                </td>
+                                <td style={{ padding: '12px', color: 'var(--color-success)' }}>${formatMoney(sales)}</td>
                                 <td style={{ padding: '12px', color: 'var(--color-danger)' }}>${formatMoney(Number(shift.retiros || 0))}</td>
                                 <td style={{ padding: '12px', fontWeight: 'bold' }}>${formatMoney(expected)}</td>
                                 <td style={{ padding: '12px' }}>${formatMoney(declared)}</td>
@@ -452,240 +717,135 @@ function ShiftHistoryTable() {
     );
 }
 
-function DailyReportTable() {
-    const [range, setRange] = useState<DateRange>(() => quickPresetRange('7d'));
-    const [data, setData] = useState<DailyReportRow[]>([]);
+// ---------------------------------------------------------------------------
+// Tab: Membresías - alerta, por vencer, vencidos, nuevos
+// ---------------------------------------------------------------------------
+
+function MembresiasTab() {
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-xl)' }}>
+            <UnpaidAttendanceAlertSection />
+            <ExpiringMembersSection />
+            <ChurnedMembersSection />
+            <NewMembersSection />
+        </div>
+    );
+}
+
+function UnpaidAttendanceAlertSection() {
+    const [alerts, setAlerts] = useState<UnpaidAttendanceAlert[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        getExpiredMembersWithUnpaidAttendance().then(res => {
+            setAlerts(res);
+            setLoading(false);
+        });
+    }, []);
+
+    if (loading) return <div>Cargando alertas...</div>;
+    if (alerts.length === 0) return null; // No alert to show - stay out of the way
+
+    return (
+        <section>
+            <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: 'var(--spacing-md)', color: 'var(--color-danger)' }}>
+                <AlertTriangle /> Alerta: Accesos de Socios Vencidos
+            </h3>
+            <p style={{ color: 'var(--color-text-secondary)', fontSize: '13px', marginBottom: 'var(--spacing-md)' }}>
+                Socios cuya membresía ya venció, pero que registran entradas permitidas después de esa fecha (excluye paquetes/visitas, que acceden con boletos aparte).
+            </p>
+            <div style={{ overflowX: 'auto', backgroundColor: 'var(--color-card)', borderRadius: '12px', padding: '10px', borderLeft: '4px solid var(--color-danger)' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '600px', fontSize: '14px' }}>
+                    <thead>
+                        <tr style={{ textAlign: 'left', color: 'var(--color-text-secondary)', borderBottom: '1px solid var(--color-border)' }}>
+                            <th style={{ padding: '12px' }}>Socio</th>
+                            <th style={{ padding: '12px' }}>Teléfono</th>
+                            <th style={{ padding: '12px' }}>Venció</th>
+                            <th style={{ padding: '12px' }}>Entradas después de vencer</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {alerts.map(a => (
+                            <tr key={a.memberId} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                <td style={{ padding: '12px', fontWeight: 'bold' }}>{a.nombre} {a.apellido}</td>
+                                <td style={{ padding: '12px' }}>{a.telefono || '—'}</td>
+                                <td style={{ padding: '12px' }}>{new Date(a.subscriptionEndDate).toLocaleDateString('es-MX')}</td>
+                                <td style={{ padding: '12px', color: 'var(--color-danger)', fontWeight: 'bold' }}>
+                                    {a.visitDates.length} ({a.visitDates.slice(0, 3).map(d => new Date(d).toLocaleDateString('es-MX')).join(', ')}{a.visitDates.length > 3 ? '...' : ''})
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    );
+}
+
+function ExpiringMembersSection() {
+    const [threshold, setThreshold] = useState(7);
+    const [members, setMembers] = useState<ExpiringMember[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         setLoading(true);
-        getDailyPerformanceSummary(range.from, range.to).then(res => {
-            setData(res);
+        getExpiringMembers(threshold).then(res => {
+            setMembers(res);
             setLoading(false);
         });
-    }, [range]);
-
-    // Obtener todos los tipos de planes únicos para renderizar las columnas dinámicamente
-    const allPlanNames = Array.from(new Set(data.flatMap(row => Object.keys(row.paymentsByPlan))));
+    }, [threshold]);
 
     return (
-        <div>
+        <section>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: 'var(--spacing-md)' }}>
-                <h3 style={{ margin: 0 }}>Resumen Diario (Ventas y Asistencia)</h3>
-                <DateRangePicker range={range} onChange={setRange} />
+                {sectionHeading(<CalendarClock color="var(--color-warning)" />, 'Por Vencer')}
+                <div style={{ display: 'flex', gap: '8px' }}>
+                    {[7, 15, 30].map(days => (
+                        <button
+                            key={days}
+                            onClick={() => setThreshold(days)}
+                            style={pickerButtonStyle(threshold === days)}
+                        >
+                            {days} días
+                        </button>
+                    ))}
+                </div>
             </div>
-
             {loading ? (
-                <div style={{ padding: '20px', color: 'var(--color-text-secondary)' }}>Cargando resumen diario...</div>
-            ) : data.length === 0 ? (
-                <div style={{ padding: '20px', fontStyle: 'italic', color: 'var(--color-text-secondary)' }}>No hay datos disponibles.</div>
+                <div style={{ padding: '20px', color: 'var(--color-text-secondary)' }}>Cargando...</div>
+            ) : members.length === 0 ? (
+                <div style={{ padding: '20px', fontStyle: 'italic', color: 'var(--color-success)' }}>Nadie vence en los próximos {threshold} días.</div>
             ) : (
                 <div style={{ overflowX: 'auto', backgroundColor: 'var(--color-card)', borderRadius: '12px', padding: '10px' }}>
-                    <p style={{ padding: '0 12px', margin: '4px 0 10px', fontSize: '12px', color: 'var(--color-text-secondary)' }}>
-                        Las columnas de plan muestran <b>número de pagos</b>, no montos — solo "Cortes Entregados" es dinero.
-                    </p>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '800px', fontSize: '14px' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '600px', fontSize: '14px' }}>
                         <thead>
-                            <tr style={{ textAlign: 'left', color: 'var(--color-text-secondary)', borderBottom: '1px solid var(--color-border)', backgroundColor: 'rgba(255,255,255,0.02)' }}>
-                                <th style={{ padding: '12px' }}>Día</th>
-                                <th style={{ padding: '12px' }}>Turno Mat.</th>
-                                <th style={{ padding: '12px' }}>Turno Vesp.</th>
-                                <th style={{ padding: '12px', fontWeight: 'bold' }}>Total Asistentes</th>
-                                {allPlanNames.map(planName => (
-                                    <th key={planName} style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>
-                                        {planName} (pagos)
-                                    </th>
-                                ))}
-                                <th style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>Cortes Entregados</th>
+                            <tr style={{ textAlign: 'left', color: 'var(--color-text-secondary)', borderBottom: '1px solid var(--color-border)' }}>
+                                <th style={{ padding: '12px' }}>Socio</th>
+                                <th style={{ padding: '12px' }}>Teléfono</th>
+                                <th style={{ padding: '12px' }}>Plan</th>
+                                <th style={{ padding: '12px' }}>Vence</th>
+                                <th style={{ padding: '12px' }}>Días</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {data.map(row => {
-                                const displayDate = new Date(`${row.date}T12:00:00Z`).toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short' });
-                                return (
-                                    <tr key={row.date} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                                        <td style={{ padding: '12px', textTransform: 'capitalize' }}>{displayDate}</td>
-                                        <td style={{ padding: '12px' }}>{row.attendeesMorning}</td>
-                                        <td style={{ padding: '12px' }}>{row.attendeesEvening}</td>
-                                        <td style={{ padding: '12px', fontWeight: 'bold' }}>{row.totalAttendees}</td>
-                                        {allPlanNames.map(planName => (
-                                            <td key={planName} style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>
-                                                {row.paymentsByPlan[planName] || 0}
-                                            </td>
-                                        ))}
-                                        <td style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)', color: 'var(--color-success)', fontWeight: 'bold' }}>
-                                            ${formatMoney(row.totalShiftReturns)}
-                                        </td>
-                                    </tr>
-                                );
-                            })}
+                            {members.map(m => (
+                                <tr key={m.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                    <td style={{ padding: '12px', fontWeight: 'bold' }}>{m.profile?.nombre} {m.profile?.apellido}</td>
+                                    <td style={{ padding: '12px' }}>{m.profile?.telefono || '—'}</td>
+                                    <td style={{ padding: '12px' }}>{m.plan?.nombre || '—'}</td>
+                                    <td style={{ padding: '12px' }}>{new Date(m.fecha_vencimiento).toLocaleDateString('es-MX')}</td>
+                                    <td style={{ padding: '12px', color: 'var(--color-warning)', fontWeight: 'bold' }}>{m.daysLeft}</td>
+                                </tr>
+                            ))}
                         </tbody>
                     </table>
                 </div>
             )}
-        </div>
+        </section>
     );
 }
 
-function MonthlyReportTable() {
-    const [data, setData] = useState<MonthlyReportRow[]>([]);
-    const [loading, setLoading] = useState(true);
-
-    useEffect(() => {
-        getMonthlyPerformanceSummary(6).then(res => {
-            setData(res);
-            setLoading(false);
-        });
-    }, []);
-
-    if (loading) return <div>Cargando resumen mensual...</div>;
-    if (data.length === 0) return <div style={{ fontStyle: 'italic', color: 'var(--color-text-secondary)' }}>No hay datos disponibles.</div>;
-
-    // Obtener todos los tipos de planes únicos para renderizar las columnas dinámicamente
-    const allPlanNames = Array.from(new Set(data.flatMap(row => Object.keys(row.paymentsByPlan))));
-
-    return (
-        <div style={{ overflowX: 'auto', backgroundColor: 'var(--color-card)', borderRadius: '12px', padding: '10px' }}>
-            <p style={{ padding: '0 12px', margin: '4px 0 10px', fontSize: '12px', color: 'var(--color-text-secondary)' }}>
-                Las columnas de plan muestran <b>número de pagos</b>, no montos — solo "Cortes Entregados" es dinero.
-            </p>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '800px', fontSize: '14px' }}>
-                <thead>
-                    <tr style={{ textAlign: 'left', color: 'var(--color-text-secondary)', borderBottom: '1px solid var(--color-border)', backgroundColor: 'rgba(255,255,255,0.02)' }}>
-                        <th style={{ padding: '12px' }}>Mes</th>
-                        <th style={{ padding: '12px' }}>Turno Mat.</th>
-                        <th style={{ padding: '12px' }}>Turno Vesp.</th>
-                        <th style={{ padding: '12px', fontWeight: 'bold' }}>Total Asistentes</th>
-                        {allPlanNames.map(planName => (
-                            <th key={planName} style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>
-                                {planName} (pagos)
-                            </th>
-                        ))}
-                        <th style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>Cortes Entregados</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {data.map(row => {
-                        // row.monthStr is "YYYY-MM"
-                        const [yyyy, mm] = row.monthStr.split('-');
-                        const displayDate = new Date(Number(yyyy), Number(mm) - 1, 1).toLocaleDateString('es-MX', { month: 'long', year: 'numeric' });
-                        return (
-                            <tr key={row.monthStr} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                                <td style={{ padding: '12px', textTransform: 'capitalize' }}>{displayDate}</td>
-                                <td style={{ padding: '12px' }}>{row.attendeesMorning}</td>
-                                <td style={{ padding: '12px' }}>{row.attendeesEvening}</td>
-                                <td style={{ padding: '12px', fontWeight: 'bold' }}>{row.totalAttendees}</td>
-                                {allPlanNames.map(planName => (
-                                    <td key={planName} style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>
-                                        {row.paymentsByPlan[planName] || 0}
-                                    </td>
-                                ))}
-                                <td style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)', color: 'var(--color-success)', fontWeight: 'bold' }}>
-                                    ${formatMoney(row.totalShiftReturns)}
-                                </td>
-                            </tr>
-                        );
-                    })}
-                </tbody>
-            </table>
-        </div>
-    );
-}
-
-function MonthlyRevenueTable() {
-    const [data, setData] = useState<MonthlyReportRow[]>([]);
-    const [loading, setLoading] = useState(true);
-
-    useEffect(() => {
-        getMonthlyPerformanceSummary(6).then(res => {
-            setData(res);
-            setLoading(false);
-        });
-    }, []);
-
-    if (loading) return <div>Cargando ingresos mensuales...</div>;
-    if (data.length === 0) return <div style={{ fontStyle: 'italic', color: 'var(--color-text-secondary)' }}>No hay datos disponibles.</div>;
-
-    const allPlanNames = Array.from(new Set(data.flatMap(row => Object.keys(row.revenueByPlan))));
-
-    return (
-        <div style={{ overflowX: 'auto', backgroundColor: 'var(--color-card)', borderRadius: '12px', padding: '10px' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '700px', fontSize: '14px' }}>
-                <thead>
-                    <tr style={{ textAlign: 'left', color: 'var(--color-text-secondary)', borderBottom: '1px solid var(--color-border)', backgroundColor: 'rgba(255,255,255,0.02)' }}>
-                        <th style={{ padding: '12px' }}>Mes</th>
-                        <th style={{ padding: '12px', fontWeight: 'bold' }}>Total</th>
-                        {allPlanNames.map(planName => (
-                            <th key={planName} style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>
-                                {planName}
-                            </th>
-                        ))}
-                    </tr>
-                </thead>
-                <tbody>
-                    {data.map(row => {
-                        const [yyyy, mm] = row.monthStr.split('-');
-                        const displayDate = new Date(Number(yyyy), Number(mm) - 1, 1).toLocaleDateString('es-MX', { month: 'long', year: 'numeric' });
-                        return (
-                            <tr key={row.monthStr} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                                <td style={{ padding: '12px', textTransform: 'capitalize' }}>{displayDate}</td>
-                                <td style={{ padding: '12px', fontWeight: 'bold', color: 'var(--color-success)' }}>
-                                    ${formatMoney(row.totalRevenue)}
-                                </td>
-                                {allPlanNames.map(planName => (
-                                    <td key={planName} style={{ padding: '12px', borderLeft: '1px solid rgba(255,255,255,0.05)' }}>
-                                        ${formatMoney(row.revenueByPlan[planName] || 0)}
-                                    </td>
-                                ))}
-                            </tr>
-                        );
-                    })}
-                </tbody>
-            </table>
-        </div>
-    );
-}
-
-function NewMembersChart() {
-    const [data, setData] = useState<NewMembersRow[]>([]);
-    const [loading, setLoading] = useState(true);
-
-    useEffect(() => {
-        getNewMembersByMonth(6).then(res => {
-            setData(res);
-            setLoading(false);
-        });
-    }, []);
-
-    if (loading) return <div>Cargando altas...</div>;
-
-    const formattedData = data.map(row => {
-        const [yyyy, mm] = row.monthStr.split('-');
-        return {
-            ...row,
-            displayDate: new Date(Number(yyyy), Number(mm) - 1, 1).toLocaleDateString('es-MX', { month: 'short', year: '2-digit' })
-        };
-    });
-
-    return (
-        <div style={{ backgroundColor: 'var(--color-card)', padding: 'var(--spacing-xl)', borderRadius: 'var(--radius-lg)', height: '320px' }}>
-            <ResponsiveContainer width="100%" height="100%">
-                <RechartsBarChart data={formattedData}>
-                    <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
-                    <XAxis dataKey="displayDate" stroke="var(--color-text-secondary)" fontSize={12} />
-                    <YAxis stroke="var(--color-text-secondary)" fontSize={12} allowDecimals={false} />
-                    <Tooltip
-                        contentStyle={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: '8px' }}
-                        itemStyle={{ color: 'var(--color-text)' }}
-                    />
-                    <Bar dataKey="count" name="Socios Nuevos" fill="var(--color-success)" radius={[4, 4, 0, 0]} />
-                </RechartsBarChart>
-            </ResponsiveContainer>
-        </div>
-    );
-}
-
-function ChurnedMembersTable() {
+function ChurnedMembersSection() {
     const [range, setRange] = useState<DateRange>(() => quickPresetRange('30d'));
     const [data, setData] = useState<ChurnedMember[]>([]);
     const [loading, setLoading] = useState(true);
@@ -699,14 +859,11 @@ function ChurnedMembersTable() {
     }, [range]);
 
     return (
-        <div>
+        <section>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: 'var(--spacing-md)' }}>
-                <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <UserMinus color="var(--color-danger)" /> Bajas / No Renovaciones
-                </h3>
+                {sectionHeading(<UserMinus color="var(--color-danger)" />, 'Vencidos / No Renovaciones')}
                 <DateRangePicker range={range} onChange={setRange} />
             </div>
-
             {loading ? (
                 <div style={{ padding: '20px', color: 'var(--color-text-secondary)' }}>Cargando...</div>
             ) : data.length === 0 ? (
@@ -735,58 +892,45 @@ function ChurnedMembersTable() {
                     </table>
                 </div>
             )}
-        </div>
+        </section>
     );
 }
 
-function SalesByCollaboratorTable() {
-    const [range, setRange] = useState<DateRange>(() => quickPresetRange('30d'));
-    const [data, setData] = useState<CollaboratorSales[]>([]);
+function NewMembersSection() {
+    const [data, setData] = useState<NewMembersRow[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        setLoading(true);
-        getSalesByCollaborator(range.from, range.to).then(res => {
+        getNewMembersByMonth(12).then(res => {
             setData(res);
             setLoading(false);
         });
-    }, [range]);
+    }, []);
+
+    if (loading) return <div>Cargando altas...</div>;
+
+    const formatted = data.map(row => ({ displayDate: monthLabel(row.monthStr), count: row.count }));
+    const thisMonth = data[data.length - 1];
 
     return (
-        <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: 'var(--spacing-md)' }}>
-                <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <Briefcase color="var(--color-accent)" /> Ventas por Colaborador
-                </h3>
-                <DateRangePicker range={range} onChange={setRange} />
-            </div>
-
-            {loading ? (
-                <div style={{ padding: '20px', color: 'var(--color-text-secondary)' }}>Cargando...</div>
-            ) : data.length === 0 ? (
-                <div style={{ padding: '20px', fontStyle: 'italic', color: 'var(--color-text-secondary)' }}>No hay ventas registradas en este periodo.</div>
-            ) : (
-                <div style={{ overflowX: 'auto', backgroundColor: 'var(--color-card)', borderRadius: '12px', padding: '10px' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '500px', fontSize: '14px' }}>
-                        <thead>
-                            <tr style={{ textAlign: 'left', color: 'var(--color-text-secondary)', borderBottom: '1px solid var(--color-border)' }}>
-                                <th style={{ padding: '12px' }}>Colaborador</th>
-                                <th style={{ padding: '12px', fontWeight: 'bold' }}>Ventas</th>
-                                <th style={{ padding: '12px' }}># Pagos</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {data.map(c => (
-                                <tr key={c.colaboradorId} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                                    <td style={{ padding: '12px', fontWeight: 'bold' }}>{c.nombre}</td>
-                                    <td style={{ padding: '12px', color: 'var(--color-success)', fontWeight: 'bold' }}>${formatMoney(c.totalVentas)}</td>
-                                    <td style={{ padding: '12px' }}>{c.numPagos}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
+        <section>
+            {sectionHeading(<UserPlus color="var(--color-success)" />, 'Altas Nuevas')}
+            {thisMonth && (
+                <p style={{ color: 'var(--color-text-secondary)', marginBottom: 'var(--spacing-md)' }}>
+                    Este mes: <b style={{ color: 'var(--color-text)' }}>{thisMonth.count}</b> socios nuevos.
+                </p>
             )}
-        </div>
+            <div style={{ ...sectionCardStyle(), height: '300px' }}>
+                <ResponsiveContainer width="100%" height="100%">
+                    <RechartsBarChart data={formatted}>
+                        <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
+                        <XAxis dataKey="displayDate" stroke="var(--color-text-secondary)" fontSize={12} />
+                        <YAxis stroke="var(--color-text-secondary)" fontSize={12} allowDecimals={false} />
+                        <Tooltip contentStyle={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: '8px' }} itemStyle={{ color: 'var(--color-text)' }} />
+                        <Bar dataKey="count" name="Socios Nuevos" fill="var(--color-success)" radius={[4, 4, 0, 0]} />
+                    </RechartsBarChart>
+                </ResponsiveContainer>
+            </div>
+        </section>
     );
 }
