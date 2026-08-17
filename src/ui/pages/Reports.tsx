@@ -1,8 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
-import { getPayments } from '../../logic/api/financeService';
-import { getMembers } from '../../logic/api/memberService';
-import type { Shift } from '../../domain/types';
-import type { DailyReportRow, MonthlyReportRow } from '../../logic/api/financeService';
+import { getIncomeSummary } from '../../logic/api/financeService';
+import { getActiveMemberCount } from '../../logic/api/memberService';
+import type { DailyReportRow, MonthlyReportRow, ShiftHistoryRow } from '../../logic/api/financeService';
 
 import { BarChart, PieChart, TrendingUp, Users } from 'lucide-react';
 import { BarChart as RechartsBarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from 'recharts';
@@ -15,24 +14,14 @@ export default function Reports() {
 
     const loadData = useCallback(async () => {
         setLoading(true);
-        const [payments, members] = await Promise.all([
-            getPayments(),
-            getMembers()
+        const [incomeSummary, activeCount] = await Promise.all([
+            getIncomeSummary(),
+            getActiveMemberCount()
         ]);
 
-        // Calc Income
-        const total = payments.reduce((sum, p) => sum + p.total, 0);
-        setTotalIncome(total);
-
-        // Calc Methods
-        const methods = payments.reduce((acc, p) => {
-            acc[p.metodo_pago] = (acc[p.metodo_pago] || 0) + p.total;
-            return acc;
-        }, {} as Record<string, number>);
-        setPaymentMethods(methods);
-
-        // Calc Members (Active Subscriptions)
-        setActiveMembers(members.filter(m => m.subscriptionStatus === 'activa').length);
+        setTotalIncome(incomeSummary.total);
+        setPaymentMethods(incomeSummary.byMethod);
+        setActiveMembers(activeCount);
 
         setLoading(false);
     }, []);
@@ -117,8 +106,6 @@ export default function Reports() {
     );
 }
 
-type ShiftHistoryItem = Shift & { profiles?: { nombre: string } };
-
 function AttendanceShiftChart() {
     const [data, setData] = useState<{ date: string; matutino: number; vespertino: number }[]>([]);
     const [loading, setLoading] = useState(true);
@@ -164,15 +151,15 @@ function AttendanceShiftChart() {
 }
 
 function ShiftHistoryTable() {
-    const [history, setHistory] = useState<ShiftHistoryItem[]>([]);
+    const [history, setHistory] = useState<ShiftHistoryRow[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        // Dynamic import to avoid circular dep issues in some bundlers if logic grows, 
+        // Dynamic import to avoid circular dep issues in some bundlers if logic grows,
         // though here it's fine. keeping pattern consistent.
         import('../../logic/api/financeService').then(mod => {
             mod.getShiftHistory().then(data => {
-                setHistory(data as ShiftHistoryItem[]);
+                setHistory(data);
                 setLoading(false);
             });
         });
@@ -203,8 +190,9 @@ function ShiftHistoryTable() {
                         const end = shift.hora_cierre ? new Date(shift.hora_cierre) : new Date();
                         const durationHrs = ((end.getTime() - start.getTime()) / 3600000).toFixed(1);
 
-                        // Expected (Total theoretical cash in drawer)
-                        const expected = Number(shift.total_efectivo || 0);
+                        // Expected (Total theoretical cash in drawer, rebuilt from payments/expenses -
+                        // shift.total_efectivo itself gets overwritten with the counted amount on close)
+                        const expected = shift.total_teorico;
 
                         // Calculate Sales
                         // Sales = Expected (Total Cash in Hand theoretical) - Initial Cash + Withdrawals
