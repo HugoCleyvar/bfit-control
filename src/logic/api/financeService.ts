@@ -1,6 +1,6 @@
-import { supabase } from './supabase';
-import type { Payment, Shift, CashCount, Expense } from '../../domain/types';
-import { calculateNominalExpiration } from '../../domain/dateUtils';
+import { supabase, fetchAllRows } from './supabase';
+import type { Payment, Shift, Expense } from '../../domain/types';
+import { calculateNominalExpiration, startOfLocalDay } from '../../domain/dateUtils';
 
 export interface PaymentWithDetails extends Payment {
     member?: { nombre: string; apellido: string; telefono?: string };
@@ -59,6 +59,27 @@ export async function getMemberPayments(memberId: string, limit = 5): Promise<Pa
 }
 
 
+export interface IncomeSummary {
+    total: number;
+    byMethod: Record<string, number>;
+}
+
+// Full historical income summary (no row limit, unlike getPayments which is paginated for lists)
+export async function getIncomeSummary(): Promise<IncomeSummary> {
+    const rows = await fetchAllRows<{ total: number; metodo_pago: string }>((from, to) =>
+        supabase.from('payments').select('total, metodo_pago').range(from, to)
+    );
+
+    const byMethod: Record<string, number> = {};
+    let total = 0;
+    rows.forEach((p) => {
+        total += p.total;
+        byMethod[p.metodo_pago] = (byMethod[p.metodo_pago] || 0) + p.total;
+    });
+
+    return { total, byMethod };
+}
+
 export async function getTodayIncome(): Promise<number> {
     const todayStr = new Date().toISOString().split('T')[0];
     const { data, error } = await supabase
@@ -86,9 +107,17 @@ export async function getActiveShifts(): Promise<(Shift & { profiles: { nombre: 
     return (data || []) as (Shift & { profiles: { nombre: string } })[];
 }
 
+export interface ShiftHistoryRow extends Shift {
+    profiles?: { nombre: string };
+    // Theoretical cash total at close time, rebuilt from payments/expenses tied to this shift
+    // (shift.total_efectivo gets overwritten with the physically counted amount on close, so it
+    // can no longer be used as the "expected" side of the cash-count difference).
+    total_teorico: number;
+}
+
 // New Admin function to see Shift History
-export async function getShiftHistory(limit = 20): Promise<(Shift & { profiles: { nombre: string } })[]> {
-    const { data, error } = await supabase
+export async function getShiftHistory(limit = 20): Promise<ShiftHistoryRow[]> {
+    const { data: shifts, error } = await supabase
         .from('shifts')
         .select('*, profiles(nombre)')
         .eq('estatus', 'cerrado')
@@ -99,7 +128,33 @@ export async function getShiftHistory(limit = 20): Promise<(Shift & { profiles: 
         console.error('Error getting shift history:', error);
         return [];
     }
-    return (data || []) as (Shift & { profiles: { nombre: string } })[];
+    if (!shifts || shifts.length === 0) return [];
+
+    const shiftIds = shifts.map((s: { id: string }) => s.id);
+
+    const [cashPayments, expensesData] = await Promise.all([
+        fetchAllRows<{ turno_id: string; total: number }>((from, to) =>
+            supabase.from('payments').select('turno_id, total').eq('metodo_pago', 'efectivo').in('turno_id', shiftIds).range(from, to)
+        ),
+        fetchAllRows<{ turno_id: string; monto: number }>((from, to) =>
+            supabase.from('expenses').select('turno_id, monto').in('turno_id', shiftIds).range(from, to)
+        )
+    ]);
+
+    const cashByShift: Record<string, number> = {};
+    cashPayments.forEach((p) => {
+        cashByShift[p.turno_id] = (cashByShift[p.turno_id] || 0) + p.total;
+    });
+
+    const expensesByShift: Record<string, number> = {};
+    expensesData.forEach((e) => {
+        expensesByShift[e.turno_id] = (expensesByShift[e.turno_id] || 0) + e.monto;
+    });
+
+    return (shifts as (Shift & { profiles?: { nombre: string } })[]).map((s) => ({
+        ...s,
+        total_teorico: Number(s.monto_inicial || 0) + (cashByShift[s.id] || 0) - (expensesByShift[s.id] || 0)
+    }));
 }
 
 export async function getCurrentShift(): Promise<Shift | null> {
@@ -154,32 +209,6 @@ export async function registerExpense(shiftId: string, amount: number, concept: 
         .eq('id', shiftId);
 
     return !shiftError;
-}
-
-export async function closeShift(shiftId: string, cashCount: CashCount, totalDeclared: number): Promise<{ success: boolean; difference: number }> {
-    const { data: shift, error: fetchError } = await supabase
-        .from('shifts')
-        .select('total_efectivo')
-        .eq('id', shiftId)
-        .single();
-
-    if (fetchError || !shift) return { success: false, difference: 0 };
-
-    const diff = totalDeclared - shift.total_efectivo;
-    const now = new Date().toISOString();
-
-    const { error: updateError } = await supabase
-        .from('shifts')
-        .update({
-            estatus: 'cerrado',
-            hora_cierre: now,
-            desglose_cierre: cashCount // Store the JSON breakdown
-        })
-        .eq('id', shiftId);
-
-    if (updateError) return { success: false, difference: 0 };
-
-    return { success: true, difference: diff };
 }
 
 export async function openShift(userId: string, initialCash: number): Promise<boolean> {
@@ -485,43 +514,54 @@ export interface DailyReportRow {
     attendeesMorning: number;
     attendeesEvening: number;
     totalAttendees: number;
-    paymentsByPlan: Record<string, number>;
+    paymentsByPlan: Record<string, number>; // count of payments per plan
+    revenueByPlan: Record<string, number>; // $ revenue per plan - pure sum of payments.total, never net of expenses/retiros
+    totalRevenue: number;
     totalShiftReturns: number; // total handed over to admin from closed shifts
 }
 
-export async function getDailyPerformanceSummary(days = 7): Promise<DailyReportRow[]> {
-    const today = new Date();
-    const startDate = new Date(today);
-    startDate.setDate(today.getDate() - (days - 1));
-    const startStr = startDate.toISOString().split('T')[0];
+export async function getDailyPerformanceSummary(from: Date, to: Date): Promise<DailyReportRow[]> {
+    const startBoundary = from.toISOString();
+    const endBoundary = to.toISOString();
 
-    // Fetch Attendance
-    const { data: attendanceData } = await supabase
-        .from('attendance')
-        .select('fecha_hora')
-        .gte('fecha_hora', `${startStr}T00:00:00`);
+    // Fetch Attendance (paginated - without .range(), Supabase silently caps at its default
+    // row limit with no guaranteed order, which can drop entire recent days/months from a
+    // report without any error. See fetchAllRows in supabase.ts.)
+    const attendanceData = await fetchAllRows<{ fecha_hora: string }>((rangeFrom, rangeTo) =>
+        supabase.from('attendance').select('fecha_hora').gte('fecha_hora', startBoundary).lte('fecha_hora', endBoundary).range(rangeFrom, rangeTo)
+    );
 
     // Fetch Payments with Plans to group by membership type
-    const { data: paymentData } = await supabase
-        .from('payments')
-        .select(`
-            fecha_pago, 
-            plan:plans(nombre)
-        `)
-        .gte('fecha_pago', `${startStr}T00:00:00`);
+    const paymentData = await fetchAllRows<any>((rangeFrom, rangeTo) =>
+        supabase
+            .from('payments')
+            .select(`
+                fecha_pago,
+                total,
+                plan:plans(nombre)
+            `)
+            .gte('fecha_pago', startBoundary)
+            .lte('fecha_pago', endBoundary)
+            .range(rangeFrom, rangeTo)
+    );
 
     // Fetch Shifts to get closed cash differences (Corte entregado)
-    const { data: shiftData } = await supabase
-        .from('shifts')
-        .select('hora_cierre, total_efectivo, desglose_cierre, fondo_siguiente_turno')
-        .eq('estatus', 'cerrado')
-        .gte('hora_cierre', `${startStr}T00:00:00`);
+    const shiftData = await fetchAllRows<any>((rangeFrom, rangeTo) =>
+        supabase
+            .from('shifts')
+            .select('hora_cierre, total_efectivo, desglose_cierre, fondo_siguiente_turno')
+            .eq('estatus', 'cerrado')
+            .gte('hora_cierre', startBoundary)
+            .lte('hora_cierre', endBoundary)
+            .range(rangeFrom, rangeTo)
+    );
 
     const reportMap: Record<string, DailyReportRow> = {};
+    const startDate = startOfLocalDay(from);
+    const dayCount = Math.round((startOfLocalDay(to).getTime() - startDate.getTime()) / 86400000) + 1;
 
-    for (let i = 0; i < days; i++) {
-        const d = new Date(startDate);
-        d.setDate(startDate.getDate() + i);
+    for (let i = 0; i < dayCount; i++) {
+        const d = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate() + i);
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, '0');
         const day = String(d.getDate()).padStart(2, '0');
@@ -532,12 +572,14 @@ export async function getDailyPerformanceSummary(days = 7): Promise<DailyReportR
             attendeesEvening: 0,
             totalAttendees: 0,
             paymentsByPlan: {},
+            revenueByPlan: {},
+            totalRevenue: 0,
             totalShiftReturns: 0
         };
     }
 
     // Aggregate Attendance
-    (attendanceData || []).forEach((a: any) => {
+    attendanceData.forEach((a) => {
         const d = new Date(a.fecha_hora);
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -553,8 +595,9 @@ export async function getDailyPerformanceSummary(days = 7): Promise<DailyReportR
         }
     });
 
-    // Aggregate Payments
-    (paymentData || []).forEach((p: any) => {
+    // Aggregate Payments (count AND revenue per plan - revenue is a pure sum of payments.total,
+    // it never touches expenses/retiros, so cash withdrawals during a shift don't affect it)
+    paymentData.forEach((p: any) => {
         const d = new Date(p.fecha_pago);
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -563,11 +606,13 @@ export async function getDailyPerformanceSummary(days = 7): Promise<DailyReportR
         if (reportMap[dateKey]) {
             const planName = p.plan?.nombre || 'Productos';
             reportMap[dateKey].paymentsByPlan[planName] = (reportMap[dateKey].paymentsByPlan[planName] || 0) + 1;
+            reportMap[dateKey].revenueByPlan[planName] = (reportMap[dateKey].revenueByPlan[planName] || 0) + p.total;
+            reportMap[dateKey].totalRevenue += p.total;
         }
     });
 
     // Aggregate Shift Cut (Corte de caja)
-    (shiftData || []).forEach((s: any) => {
+    shiftData.forEach((s: any) => {
         if (!s.hora_cierre) return;
         const d = new Date(s.hora_cierre);
         const y = d.getFullYear();
@@ -575,10 +620,9 @@ export async function getDailyPerformanceSummary(days = 7): Promise<DailyReportR
         const day = String(d.getDate()).padStart(2, '0');
         const dateKey = `${y}-${m}-${day}`;
         if (reportMap[dateKey]) {
-            let collectedInDrawer = s.total_efectivo || 0;
-            if (s.desglose_cierre && typeof s.desglose_cierre === 'object' && 'total' in s.desglose_cierre) {
-                collectedInDrawer = (s.desglose_cierre as any).total;
-            }
+            // total_efectivo already reflects the counted/handed-over cash once the shift is
+            // closed (see closeShift in shiftContext.tsx), so it doesn't need re-deriving.
+            const collectedInDrawer = s.total_efectivo || 0;
             const leftInDrawer = s.fondo_siguiente_turno ? Number(s.fondo_siguiente_turno) : 0;
             const handedToAdmin = Math.max(0, collectedInDrawer - leftInDrawer);
             
@@ -594,37 +638,47 @@ export interface MonthlyReportRow {
     attendeesMorning: number;
     attendeesEvening: number;
     totalAttendees: number;
-    paymentsByPlan: Record<string, number>;
+    paymentsByPlan: Record<string, number>; // count of payments per plan
+    revenueByPlan: Record<string, number>; // $ revenue per plan - pure sum of payments.total, never net of expenses/retiros
+    totalRevenue: number;
     totalShiftReturns: number;
 }
 
 export async function getMonthlyPerformanceSummary(months = 6): Promise<MonthlyReportRow[]> {
     const today = new Date();
-    // Start date N months ago (1st day of the month)
+    // Start date N months ago (1st day of the month, local midnight)
     const startDate = new Date(today.getFullYear(), today.getMonth() - (months - 1), 1);
-    const startStr = startDate.toISOString().split('T')[0];
+    const startBoundary = startDate.toISOString();
 
-    // Fetch Attendance
-    const { data: attendanceData } = await supabase
-        .from('attendance')
-        .select('fecha_hora')
-        .gte('fecha_hora', `${startStr}T00:00:00`);
+    // Fetch Attendance (paginated - see the comment in getDailyPerformanceSummary for why:
+    // without .range(), Supabase silently caps at its default row limit with no guaranteed
+    // order, which was dropping recent months - the most data-heavy ones - from this report)
+    const attendanceData = await fetchAllRows<{ fecha_hora: string }>((rangeFrom, rangeTo) =>
+        supabase.from('attendance').select('fecha_hora').gte('fecha_hora', startBoundary).range(rangeFrom, rangeTo)
+    );
 
     // Fetch Payments with Plans to group by membership type
-    const { data: paymentData } = await supabase
-        .from('payments')
-        .select(`
-            fecha_pago, 
-            plan:plans(nombre)
-        `)
-        .gte('fecha_pago', `${startStr}T00:00:00`);
+    const paymentData = await fetchAllRows<any>((rangeFrom, rangeTo) =>
+        supabase
+            .from('payments')
+            .select(`
+                fecha_pago,
+                total,
+                plan:plans(nombre)
+            `)
+            .gte('fecha_pago', startBoundary)
+            .range(rangeFrom, rangeTo)
+    );
 
     // Fetch Shifts to get closed cash differences
-    const { data: shiftData } = await supabase
-        .from('shifts')
-        .select('hora_cierre, total_efectivo, desglose_cierre, fondo_siguiente_turno')
-        .eq('estatus', 'cerrado')
-        .gte('hora_cierre', `${startStr}T00:00:00`);
+    const shiftData = await fetchAllRows<any>((rangeFrom, rangeTo) =>
+        supabase
+            .from('shifts')
+            .select('hora_cierre, total_efectivo, desglose_cierre, fondo_siguiente_turno')
+            .eq('estatus', 'cerrado')
+            .gte('hora_cierre', startBoundary)
+            .range(rangeFrom, rangeTo)
+    );
 
     const reportMap: Record<string, MonthlyReportRow> = {};
 
@@ -639,12 +693,14 @@ export async function getMonthlyPerformanceSummary(months = 6): Promise<MonthlyR
             attendeesEvening: 0,
             totalAttendees: 0,
             paymentsByPlan: {},
+            revenueByPlan: {},
+            totalRevenue: 0,
             totalShiftReturns: 0
         };
     }
 
     // Aggregate Attendance
-    (attendanceData || []).forEach((a: any) => {
+    attendanceData.forEach((a) => {
         const d = new Date(a.fecha_hora);
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -659,8 +715,9 @@ export async function getMonthlyPerformanceSummary(months = 6): Promise<MonthlyR
         }
     });
 
-    // Aggregate Payments
-    (paymentData || []).forEach((p: any) => {
+    // Aggregate Payments (count AND revenue per plan - revenue is a pure sum of payments.total,
+    // it never touches expenses/retiros, so cash withdrawals during a shift don't affect it)
+    paymentData.forEach((p: any) => {
         const d = new Date(p.fecha_pago);
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -668,28 +725,109 @@ export async function getMonthlyPerformanceSummary(months = 6): Promise<MonthlyR
         if (reportMap[monthKey]) {
             const planName = p.plan?.nombre || 'Productos';
             reportMap[monthKey].paymentsByPlan[planName] = (reportMap[monthKey].paymentsByPlan[planName] || 0) + 1;
+            reportMap[monthKey].revenueByPlan[planName] = (reportMap[monthKey].revenueByPlan[planName] || 0) + p.total;
+            reportMap[monthKey].totalRevenue += p.total;
         }
     });
 
     // Aggregate Shift Cut (Corte de caja)
-    (shiftData || []).forEach((s: any) => {
+    shiftData.forEach((s: any) => {
         if (!s.hora_cierre) return;
         const d = new Date(s.hora_cierre);
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, '0');
         const monthKey = `${y}-${m}`;
         if (reportMap[monthKey]) {
-            let collectedInDrawer = s.total_efectivo || 0;
-            if (s.desglose_cierre && typeof s.desglose_cierre === 'object' && 'total' in s.desglose_cierre) {
-                collectedInDrawer = (s.desglose_cierre as any).total;
-            }
+            // total_efectivo already reflects the counted/handed-over cash once the shift is
+            // closed (see closeShift in shiftContext.tsx), so it doesn't need re-deriving.
+            const collectedInDrawer = s.total_efectivo || 0;
             const leftInDrawer = s.fondo_siguiente_turno ? Number(s.fondo_siguiente_turno) : 0;
             const handedToAdmin = Math.max(0, collectedInDrawer - leftInDrawer);
-            
+
             reportMap[monthKey].totalShiftReturns += handedToAdmin;
         }
     });
 
     // Sort descending by month
     return Object.values(reportMap).sort((a, b) => b.monthStr.localeCompare(a.monthStr));
+}
+
+export interface CollaboratorSales {
+    colaboradorId: string;
+    nombre: string;
+    totalVentas: number;
+    numPagos: number;
+}
+
+// Sales per collaborator for a period - pure sum of payments.total per colaborador_id,
+// same "never net against expenses" rule as the rest of the income reports.
+export async function getSalesByCollaborator(from: Date, to: Date): Promise<CollaboratorSales[]> {
+    const [payments, { data: profiles }] = await Promise.all([
+        fetchAllRows<{ colaborador_id: string | null; total: number }>((rangeFrom, rangeTo) =>
+            supabase
+                .from('payments')
+                .select('colaborador_id, total')
+                .gte('fecha_pago', from.toISOString())
+                .lte('fecha_pago', to.toISOString())
+                .range(rangeFrom, rangeTo)
+        ),
+        supabase.from('profiles').select('id, nombre')
+    ]);
+
+    const nameById = new Map((profiles || []).map((p: { id: string; nombre: string }) => [p.id, p.nombre]));
+
+    const byCollaborator: Record<string, { totalVentas: number; numPagos: number }> = {};
+    payments.forEach(p => {
+        if (!p.colaborador_id) return;
+        const entry = byCollaborator[p.colaborador_id] || { totalVentas: 0, numPagos: 0 };
+        entry.totalVentas += p.total;
+        entry.numPagos += 1;
+        byCollaborator[p.colaborador_id] = entry;
+    });
+
+    return Object.entries(byCollaborator)
+        .map(([colaboradorId, stats]) => ({
+            colaboradorId,
+            nombre: nameById.get(colaboradorId) || 'Desconocido',
+            ...stats
+        }))
+        .sort((a, b) => b.totalVentas - a.totalVentas);
+}
+
+export interface ShiftTypeRevenue {
+    matutino: number;
+    vespertino: number;
+}
+
+// Revenue split by which shift was open when each payment was made (payments.turno_id ->
+// shifts.horario). Pure sum of payments.total, same "never net of expenses" rule as the rest.
+export async function getRevenueByShiftType(from: Date, to: Date): Promise<ShiftTypeRevenue> {
+    const payments = await fetchAllRows<{ turno_id: string | null; total: number }>((rangeFrom, rangeTo) =>
+        supabase
+            .from('payments')
+            .select('turno_id, total')
+            .gte('fecha_pago', from.toISOString())
+            .lte('fecha_pago', to.toISOString())
+            .range(rangeFrom, rangeTo)
+    );
+
+    const turnoIds = Array.from(new Set(payments.map(p => p.turno_id).filter((id): id is string => !!id)));
+
+    const horarioById = new Map<string, string>();
+    if (turnoIds.length > 0) {
+        const shifts = await fetchAllRows<{ id: string; horario: string }>((rangeFrom, rangeTo) =>
+            supabase.from('shifts').select('id, horario').in('id', turnoIds).range(rangeFrom, rangeTo)
+        );
+        shifts.forEach(s => horarioById.set(s.id, s.horario));
+    }
+
+    const result: ShiftTypeRevenue = { matutino: 0, vespertino: 0 };
+    payments.forEach(p => {
+        if (!p.turno_id) return;
+        const horario = horarioById.get(p.turno_id);
+        if (horario === 'matutino') result.matutino += p.total;
+        else if (horario === 'vespertino') result.vespertino += p.total;
+    });
+
+    return result;
 }

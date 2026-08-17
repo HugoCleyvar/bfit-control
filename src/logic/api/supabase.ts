@@ -26,3 +26,28 @@ export const supabase = createClient(
         }
     }
 );
+
+// Supabase/PostgREST caps any unranged .select() at a server-configured row limit
+// (1000 by default). Report aggregates need every row, so this pages through with
+// .range() until an empty page comes back, instead of trusting a single request.
+export async function fetchAllRows<T>(
+    build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>
+): Promise<T[]> {
+    const pageSize = 1000;
+    let offset = 0;
+    const rows: T[] = [];
+
+    while (true) {
+        const { data, error } = await build(offset, offset + pageSize - 1);
+        if (error) {
+            console.error('Error paginating rows:', error);
+            break;
+        }
+        if (!data || data.length === 0) break;
+
+        rows.push(...data);
+        offset += data.length;
+    }
+
+    return rows;
+}

@@ -1,6 +1,7 @@
-import { supabase } from './supabase';
+import { supabase, fetchAllRows } from './supabase';
 import type { Attendance } from '../../domain/types';
 import { findMemberForCheckIn } from './memberService';
+import { startOfLocalDay } from '../../domain/dateUtils';
 
 export interface CheckInResult {
     success: boolean;
@@ -190,26 +191,24 @@ export async function getAttendanceHeatmap(): Promise<{ hour: number; count: num
     })).sort((a, b) => a.hour - b.hour);
 }
 
-export async function getDailyAttendanceByShift(days = 7): Promise<{ date: string; matutino: number; vespertino: number }[]> {
-    const today = new Date();
-    const pastDate = new Date(today);
-    pastDate.setDate(today.getDate() - (days - 1));
-    const dateStr = pastDate.toISOString().split('T')[0];
+export async function getDailyAttendanceByShift(from: Date, to: Date): Promise<{ date: string; matutino: number; vespertino: number }[]> {
+    // Paginated - without .range(), Supabase silently caps at its default row limit with no
+    // guaranteed order, which can drop entire recent days from a busy gym's report.
+    const data = await fetchAllRows<{ fecha_hora: string }>((rangeFrom, rangeTo) =>
+        supabase
+            .from('attendance')
+            .select('fecha_hora')
+            .gte('fecha_hora', from.toISOString())
+            .lte('fecha_hora', to.toISOString())
+            .range(rangeFrom, rangeTo)
+    );
 
-    const { data, error } = await supabase
-        .from('attendance')
-        .select('fecha_hora')
-        .gte('fecha_hora', `${dateStr}T00:00:00`);
-
-    if (error) {
-        console.error('Error fetching attendance by shift:', error);
-        return [];
-    }
+    const start = startOfLocalDay(from);
+    const dayCount = Math.round((startOfLocalDay(to).getTime() - start.getTime()) / 86400000) + 1;
 
     const reportMap: Record<string, { matutino: number; vespertino: number }> = {};
-    for (let i = 0; i < days; i++) {
-        const d = new Date(pastDate);
-        d.setDate(pastDate.getDate() + i);
+    for (let i = 0; i < dayCount; i++) {
+        const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, '0');
         const day = String(d.getDate()).padStart(2, '0');
