@@ -59,6 +59,32 @@ export async function getMemberPayments(memberId: string, limit = 5): Promise<Pa
 }
 
 
+export interface IncomeSummary {
+    total: number;
+    byMethod: Record<string, number>;
+}
+
+// Full historical income summary (no row limit, unlike getPayments which is paginated for lists)
+export async function getIncomeSummary(): Promise<IncomeSummary> {
+    const { data, error } = await supabase
+        .from('payments')
+        .select('total, metodo_pago');
+
+    if (error) {
+        console.error('Error getting income summary:', error);
+        return { total: 0, byMethod: {} };
+    }
+
+    const byMethod: Record<string, number> = {};
+    let total = 0;
+    (data || []).forEach((p: { total: number; metodo_pago: string }) => {
+        total += p.total;
+        byMethod[p.metodo_pago] = (byMethod[p.metodo_pago] || 0) + p.total;
+    });
+
+    return { total, byMethod };
+}
+
 export async function getTodayIncome(): Promise<number> {
     const todayStr = new Date().toISOString().split('T')[0];
     const { data, error } = await supabase
@@ -86,9 +112,17 @@ export async function getActiveShifts(): Promise<(Shift & { profiles: { nombre: 
     return (data || []) as (Shift & { profiles: { nombre: string } })[];
 }
 
+export interface ShiftHistoryRow extends Shift {
+    profiles?: { nombre: string };
+    // Theoretical cash total at close time, rebuilt from payments/expenses tied to this shift
+    // (shift.total_efectivo gets overwritten with the physically counted amount on close, so it
+    // can no longer be used as the "expected" side of the cash-count difference).
+    total_teorico: number;
+}
+
 // New Admin function to see Shift History
-export async function getShiftHistory(limit = 20): Promise<(Shift & { profiles: { nombre: string } })[]> {
-    const { data, error } = await supabase
+export async function getShiftHistory(limit = 20): Promise<ShiftHistoryRow[]> {
+    const { data: shifts, error } = await supabase
         .from('shifts')
         .select('*, profiles(nombre)')
         .eq('estatus', 'cerrado')
@@ -99,7 +133,29 @@ export async function getShiftHistory(limit = 20): Promise<(Shift & { profiles: 
         console.error('Error getting shift history:', error);
         return [];
     }
-    return (data || []) as (Shift & { profiles: { nombre: string } })[];
+    if (!shifts || shifts.length === 0) return [];
+
+    const shiftIds = shifts.map((s: { id: string }) => s.id);
+
+    const [{ data: cashPayments }, { data: expensesData }] = await Promise.all([
+        supabase.from('payments').select('turno_id, total').eq('metodo_pago', 'efectivo').in('turno_id', shiftIds),
+        supabase.from('expenses').select('turno_id, monto').in('turno_id', shiftIds)
+    ]);
+
+    const cashByShift: Record<string, number> = {};
+    (cashPayments || []).forEach((p: { turno_id: string; total: number }) => {
+        cashByShift[p.turno_id] = (cashByShift[p.turno_id] || 0) + p.total;
+    });
+
+    const expensesByShift: Record<string, number> = {};
+    (expensesData || []).forEach((e: { turno_id: string; monto: number }) => {
+        expensesByShift[e.turno_id] = (expensesByShift[e.turno_id] || 0) + e.monto;
+    });
+
+    return (shifts as (Shift & { profiles?: { nombre: string } })[]).map((s) => ({
+        ...s,
+        total_teorico: Number(s.monto_inicial || 0) + (cashByShift[s.id] || 0) - (expensesByShift[s.id] || 0)
+    }));
 }
 
 export async function getCurrentShift(): Promise<Shift | null> {
