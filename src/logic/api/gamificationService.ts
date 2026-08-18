@@ -73,7 +73,13 @@ export async function getExpiringMembers(daysThreshold = 5): Promise<ExpiringMem
             plan,
             daysLeft: daysLeft
         };
-    }).filter((m) => m.profile);
+    }).filter((m) => {
+        if (!m.profile) return false;
+        // Visita/paquete plans get a subscriptions row too (see registerPayment), but members
+        // on them access by ticket count, not by this date - it's not a renewal to chase.
+        const planName = m.plan?.nombre?.toLowerCase() || '';
+        return !planName.includes('visita') && !planName.includes('paquete');
+    });
 }
 
 export async function getMemberStats(userId: string): Promise<{ totalVisits: number; thisMonth: number; streak: number }> {
