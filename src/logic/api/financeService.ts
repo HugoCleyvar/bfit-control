@@ -111,6 +111,80 @@ export async function getActiveShifts(): Promise<(Shift & { profiles: { nombre: 
     return (data || []) as (Shift & { profiles: { nombre: string } })[];
 }
 
+export interface ShiftMovement {
+    id: string;
+    type: 'pago' | 'retiro';
+    turnoId: string | null;
+    monto: number;
+    metodoPago?: Payment['metodo_pago'];
+    detalle: string;
+    fecha: string;
+}
+
+// Recent payments + expenses across the given (currently open) shifts, merged and sorted
+// newest-first. Feeds the admin's live shift monitor (LiveShiftFeed).
+export async function getRecentShiftMovements(shiftIds: string[], limit = 20): Promise<ShiftMovement[]> {
+    if (shiftIds.length === 0) return [];
+
+    const [{ data: payments, error: payError }, { data: expenses, error: expError }] = await Promise.all([
+        supabase
+            .from('payments')
+            .select('id, total, metodo_pago, fecha_pago, concepto, turno_id, member:members(nombre, apellido)')
+            .in('turno_id', shiftIds)
+            .order('fecha_pago', { ascending: false })
+            .limit(limit),
+        supabase
+            .from('expenses')
+            .select('id, monto, concepto, fecha_hora, turno_id')
+            .in('turno_id', shiftIds)
+            .order('fecha_hora', { ascending: false })
+            .limit(limit)
+    ]);
+
+    if (payError) console.error('Error fetching recent payments:', payError);
+    if (expError) console.error('Error fetching recent expenses:', expError);
+
+    interface PaymentMovementRow {
+        id: string;
+        total: number;
+        metodo_pago: Payment['metodo_pago'];
+        fecha_pago: string;
+        concepto?: string;
+        turno_id: string | null;
+        member: { nombre: string; apellido: string } | null;
+    }
+    interface ExpenseMovementRow {
+        id: string;
+        monto: number;
+        concepto: string;
+        fecha_hora: string;
+        turno_id: string | null;
+    }
+
+    const paymentMovements: ShiftMovement[] = ((payments || []) as unknown as PaymentMovementRow[]).map((p) => ({
+        id: `pago-${p.id}`,
+        type: 'pago',
+        turnoId: p.turno_id,
+        monto: p.total,
+        metodoPago: p.metodo_pago,
+        detalle: p.member ? `${p.member.nombre} ${p.member.apellido}` : (p.concepto || 'Venta de producto'),
+        fecha: p.fecha_pago
+    }));
+
+    const expenseMovements: ShiftMovement[] = ((expenses || []) as unknown as ExpenseMovementRow[]).map((e) => ({
+        id: `retiro-${e.id}`,
+        type: 'retiro',
+        turnoId: e.turno_id,
+        monto: e.monto,
+        detalle: e.concepto,
+        fecha: e.fecha_hora
+    }));
+
+    return [...paymentMovements, ...expenseMovements]
+        .sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime())
+        .slice(0, limit);
+}
+
 export interface ShiftHistoryRow extends Shift {
     profiles?: { nombre: string };
     // Theoretical cash total at close time, rebuilt from payments/expenses tied to this shift

@@ -1,11 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
-import { getActiveShifts, getWeeklyRevenue, getTodayIncome, closeShiftAsAdmin } from '../../logic/api/financeService';
+import { useState, useEffect } from 'react';
+import { getWeeklyRevenue, getTodayIncome } from '../../logic/api/financeService';
 import { getActiveMemberCount } from '../../logic/api/memberService';
 import { getTodayAttendance, getAttendanceHeatmap } from '../../logic/api/attendanceService';
 import { getExpiringMembers, type ExpiringMember } from '../../logic/api/gamificationService';
-import { CloseShiftModal } from '../components/CloseShiftModal';
 import { Users, TrendingUp, Calendar, Clock, AlertCircle, Loader2, MessageCircle } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import LiveShiftFeed from '../components/LiveShiftFeed';
 
 export default function AdminDashboard() {
     // Stats State
@@ -152,10 +152,10 @@ export default function AdminDashboard() {
 
             </div>
 
-            {/* Active Shifts Widget */}
+            {/* Live Shift Feed */}
             <div style={{ marginTop: 'var(--spacing-xl)' }}>
-                <h3 style={{ marginBottom: 'var(--spacing-md)' }}>Supervisión de Turnos Activos</h3>
-                <ActiveShiftsTable />
+                <h3 style={{ marginBottom: 'var(--spacing-md)' }}>Supervisión de Turnos Activos (en vivo)</h3>
+                <LiveShiftFeed />
             </div>
 
             {/* Retention Alert Widget */}
@@ -289,73 +289,5 @@ function KpiCard({ icon, title, value, color }: { icon: React.ReactNode, title: 
                 {value}
             </div>
         </div>
-    );
-}
-
-function ActiveShiftsTable() {
-    const [shifts, setShifts] = useState<Awaited<ReturnType<typeof getActiveShifts>>>([]);
-    const [closingShift, setClosingShift] = useState<Awaited<ReturnType<typeof getActiveShifts>>[number] | null>(null);
-
-    const loadShifts = useCallback(() => {
-        getActiveShifts().then(setShifts);
-    }, []);
-
-    useEffect(() => {
-        loadShifts();
-    }, [loadShifts]);
-
-    if (shifts.length === 0) return <div style={{ color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>No hay turnos activos en este momento.</div>;
-
-    return (
-        <>
-            <div style={{ overflowX: 'auto', backgroundColor: 'var(--color-card)', borderRadius: '12px', padding: '10px' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '600px' }}>
-                    <thead>
-                        <tr style={{ textAlign: 'left', color: 'var(--color-text-secondary)', borderBottom: '1px solid var(--color-border)' }}>
-                            <th style={{ padding: '12px' }}>Colaborador</th>
-                            <th style={{ padding: '12px' }}>Inicio</th>
-                            <th style={{ padding: '12px' }}>Efec. Inicial</th>
-                            <th style={{ padding: '12px' }}>En Caja (Teórico)</th>
-                            <th style={{ padding: '12px' }}>Retiros</th>
-                            <th style={{ padding: '12px' }}></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {shifts.map(s => (
-                            <tr key={s.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                                <td style={{ padding: '12px', fontWeight: 'bold' }}>{s.profiles?.nombre || 'Unknown'}</td>
-                                <td style={{ padding: '12px' }}>{new Date(s.hora_inicio).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
-                                <td style={{ padding: '12px' }}>${s.monto_inicial}</td>
-                                <td style={{ padding: '12px', color: 'var(--color-success)', fontWeight: 'bold' }}>${s.total_efectivo}</td>
-                                <td style={{ padding: '12px', color: 'var(--color-danger)' }}>${s.retiros}</td>
-                                <td style={{ padding: '12px' }}>
-                                    <button
-                                        onClick={() => setClosingShift(s)}
-                                        style={{ padding: '6px 12px', fontSize: '12px', backgroundColor: 'var(--color-danger)', borderRadius: '6px', whiteSpace: 'nowrap' }}
-                                    >
-                                        Cerrar Turno
-                                    </button>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-
-            {closingShift && (
-                <CloseShiftModal
-                    title={`Cerrar Turno de ${closingShift.profiles?.nombre || 'Colaborador'}`}
-                    shift={{ total_efectivo: closingShift.total_efectivo, monto_inicial: closingShift.monto_inicial, retiros: closingShift.retiros }}
-                    onCancel={() => setClosingShift(null)}
-                    onConfirm={(cashCount, countedCash, nextFundCashCount, nextFundTotal) =>
-                        closeShiftAsAdmin(closingShift.id, cashCount, countedCash, nextFundCashCount, nextFundTotal)
-                    }
-                    onClosed={() => {
-                        setClosingShift(null);
-                        loadShifts();
-                    }}
-                />
-            )}
-        </>
     );
 }
