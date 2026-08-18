@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getPayments, registerPayment, deletePaymentAdmin, type PaymentWithDetails } from '../../logic/api/financeService';
+import { getPayments, registerPayment, deletePaymentAdmin, getActiveShifts, type PaymentWithDetails } from '../../logic/api/financeService';
 import { getPlans, type Plan } from '../../logic/api/planService';
 import { getProducts, processSaleDeduction, type Product } from '../../logic/api/productService';
 import { useAuth } from '../../logic/authContext';
@@ -11,6 +11,9 @@ import { CreditCard, Banknote, DollarSign, PlusCircle, MessageCircle, Trash2 } f
 
 
 export default function PaymentsPage() {
+    const { user, isAdmin } = useAuth();
+    const { currentShift } = useShift();
+
     const [payments, setPayments] = useState<PaymentWithDetails[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -29,29 +32,41 @@ export default function PaymentsPage() {
     const [products, setProducts] = useState<Product[]>([]); // New State
     const [selectedProductId, setSelectedProductId] = useState<string>(''); // For Inventory tracking
 
+    // Admin covering a sale during a collaborator's shift (no shift open of their own):
+    // which open shift's cash drawer this sale actually belongs to, so its close-out isn't
+    // left over/short by whatever the admin rang up on their behalf.
+    const [activeShifts, setActiveShifts] = useState<Awaited<ReturnType<typeof getActiveShifts>>>([]);
+    const [selectedShiftId, setSelectedShiftId] = useState('');
+
     const loadInitialData = useCallback(async () => {
         setLoading(true);
         try {
-            const [pData, plData, prData] = await Promise.all([
+            const [pData, plData, prData, shiftsData] = await Promise.all([
                 getPayments(50),
                 getPlans(),
-                getProducts() // Fetch Products
+                getProducts(), // Fetch Products
+                isAdmin ? getActiveShifts() : Promise.resolve([])
             ]);
             setPayments(pData);
             setPlans(plData);
             setProducts(prData);
+            setActiveShifts(shiftsData);
         } catch (e) {
             console.error(e);
         }
         setLoading(false);
-    }, []);
+    }, [isAdmin]);
 
     useEffect(() => {
         loadInitialData();
     }, [loadInitialData]);
 
-    const { user, isAdmin } = useAuth();
-    const { currentShift } = useShift();
+    // Only one shift open to attribute to - nothing to ask, pick it automatically
+    useEffect(() => {
+        if (isAdmin && !currentShift && activeShifts.length === 1) {
+            setSelectedShiftId(activeShifts[0].id);
+        }
+    }, [isAdmin, currentShift, activeShifts]);
 
     const handlePayment = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -61,6 +76,11 @@ export default function PaymentsPage() {
 
         if (!isAdmin && !currentShift) {
             alert('Debes abrir un turno para registrar pagos.');
+            return;
+        }
+
+        if (isAdmin && !currentShift && activeShifts.length > 1 && !selectedShiftId) {
+            alert('Selecciona a qué turno (colaborador) pertenece esta venta, para que no descuadre su corte de caja.');
             return;
         }
 
@@ -88,7 +108,7 @@ export default function PaymentsPage() {
                 metodo_pago: method,
                 fecha_pago: new Date().toISOString(),
                 colaborador_id: user.id,
-                turno_id: currentShift?.id,
+                turno_id: currentShift?.id || (isAdmin ? selectedShiftId || undefined : undefined),
                 usuario_id: mode === 'membership' ? selectedMemberId : undefined,
                 plan_id: mode === 'membership' ? selectedPlanId : undefined,
                 force: force // We'll add this to the API
@@ -290,6 +310,34 @@ export default function PaymentsPage() {
                     </div>
 
                     <form onSubmit={handlePayment} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
+
+                        {isAdmin && !currentShift && activeShifts.length > 0 && (
+                            <div style={{ padding: '10px', background: 'rgba(255,255,255,0.05)', borderRadius: 'var(--radius-md)' }}>
+                                <label style={{ display: 'block', marginBottom: '8px', fontSize: 'var(--font-size-sm)' }}>
+                                    Venta a nombre del turno de
+                                </label>
+                                <select
+                                    value={selectedShiftId}
+                                    onChange={e => setSelectedShiftId(e.target.value)}
+                                    required={activeShifts.length > 1}
+                                    style={{
+                                        width: '100%', padding: '10px',
+                                        borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)',
+                                        backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)'
+                                    }}
+                                >
+                                    {activeShifts.length > 1 && <option value="">Selecciona colaborador...</option>}
+                                    {activeShifts.map(s => (
+                                        <option key={s.id} value={s.id}>
+                                            {s.profiles?.nombre || 'Sin nombre'} ({s.horario === 'matutino' ? 'Matutino' : 'Vespertino'})
+                                        </option>
+                                    ))}
+                                </select>
+                                <p style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '6px', marginBottom: 0 }}>
+                                    Estás cobrando sin turno propio abierto. Indica de qué colaborador es la caja donde caerá este efectivo, para que no le sobre/falte en su corte.
+                                </p>
+                            </div>
+                        )}
 
                         {mode === 'membership' && (
                             <>
