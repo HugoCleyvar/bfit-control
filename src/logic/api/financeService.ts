@@ -1,6 +1,6 @@
 import { supabase, fetchAllRows } from './supabase';
 import type { Payment, Shift, Expense } from '../../domain/types';
-import { calculateNominalExpiration, startOfLocalDay } from '../../domain/dateUtils';
+import { calculateNominalExpiration, startOfLocalDay, endOfLocalDay } from '../../domain/dateUtils';
 
 export interface PaymentWithDetails extends Payment {
     member?: { nombre: string; apellido: string; telefono?: string };
@@ -81,11 +81,15 @@ export async function getIncomeSummary(): Promise<IncomeSummary> {
 }
 
 export async function getTodayIncome(): Promise<number> {
-    const todayStr = new Date().toISOString().split('T')[0];
+    // Local-day boundary, not UTC: at this file's UTC offset, deriving "today" from
+    // toISOString() rolls over hours before/after local midnight, which was silently
+    // folding part of the previous evening's (or missing part of today's) payments in.
+    const now = new Date();
     const { data, error } = await supabase
         .from('payments')
         .select('total')
-        .gte('fecha_pago', `${todayStr}T00:00:00`);
+        .gte('fecha_pago', startOfLocalDay(now).toISOString())
+        .lte('fecha_pago', endOfLocalDay(now).toISOString());
 
     if (error || !data) return 0;
 
@@ -402,32 +406,35 @@ export async function getWeeklyRevenue(): Promise<{ date: string; total: number 
     const today = new Date();
     const sevenDaysAgo = new Date(today);
     sevenDaysAgo.setDate(today.getDate() - 6); // Include today
-    const sevenDaysStr = sevenDaysAgo.toISOString().split('T')[0];
 
-    // Fetch payments since 7 days ago
+    // Fetch payments since 7 local days ago (local-day boundary, not UTC - see getTodayIncome)
     const { data, error } = await supabase
         .from('payments')
         .select('fecha_pago, total')
-        .gte('fecha_pago', `${sevenDaysStr}T00:00:00`);
+        .gte('fecha_pago', startOfLocalDay(sevenDaysAgo).toISOString());
 
     if (error) {
         console.error('Error fetching weekly revenue:', error);
         return [];
     }
 
+    // YYYY-MM-DD from local date parts, so a payment lands on the same calendar day a
+    // person would name it - toISOString() here would bucket by UTC day instead.
+    const dateKeyOf = (d: Date) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
     // Initialize map with 0 for last 7 days to show empty days
     const revenueMap: Record<string, number> = {};
     for (let i = 0; i < 7; i++) {
         const d = new Date(sevenDaysAgo);
         d.setDate(sevenDaysAgo.getDate() + i);
-        const dateKey = d.toISOString().split('T')[0];
         // Format nicer: "Mon 01" or just "DD/MM" - keeping ISO key for sorting, formatting in UI
-        revenueMap[dateKey] = 0;
+        revenueMap[dateKeyOf(d)] = 0;
     }
 
     // Sum totals
     data.forEach((p: { fecha_pago: string; total: number }) => {
-        const dateKey = new Date(p.fecha_pago).toISOString().split('T')[0];
+        const dateKey = dateKeyOf(new Date(p.fecha_pago));
         if (revenueMap[dateKey] !== undefined) {
             revenueMap[dateKey] += p.total;
         }
