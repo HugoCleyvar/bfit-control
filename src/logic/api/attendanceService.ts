@@ -162,12 +162,11 @@ export async function getAttendanceHeatmap(): Promise<{ hour: number; count: num
     const today = new Date();
     const thirtyDaysAgo = new Date(today);
     thirtyDaysAgo.setDate(today.getDate() - 30);
-    const dateStr = thirtyDaysAgo.toISOString().split('T')[0];
 
     const { data, error } = await supabase
         .from('attendance')
         .select('fecha_hora')
-        .gte('fecha_hora', `${dateStr}T00:00:00`);
+        .gte('fecha_hora', startOfLocalDay(thirtyDaysAgo).toISOString());
 
     if (error) {
         console.error('Error fetching heatmap:', error);
