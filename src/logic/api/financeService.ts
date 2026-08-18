@@ -161,17 +161,6 @@ export async function getShiftHistory(limit = 20): Promise<ShiftHistoryRow[]> {
     }));
 }
 
-export async function getCurrentShift(): Promise<Shift | null> {
-    const { data, error } = await supabase
-        .from('shifts')
-        .select('*')
-        .eq('estatus', 'abierto')
-        .single();
-
-    if (error || !data) return null;
-    return data as Shift;
-}
-
 export async function getShiftExpenses(shiftId: string): Promise<Expense[]> {
     const { data, error } = await supabase
         .from('expenses')
@@ -253,14 +242,15 @@ export async function registerPayment(payment: Omit<Payment, 'id'> & { force?: b
         }
     }
 
-    // 1. Get Open Shift (Global - specific requirement: Attribute to OPEN shift)
-    // We try to find the open shift. If multiple, we might have an issue, but we pick the single one.
-    const currentShift = await getCurrentShift();
-    const shiftId = currentShift?.id;
-
-    if (!shiftId && payment.metodo_pago === 'efectivo') {
-        // Warning but proceed
-    }
+    // 1. Attribute to the shift the caller already resolved for this collaborator
+    // (payment.turno_id, from their own open shift - see shiftContext.tsx). This used to
+    // be re-derived here via getCurrentShift(), an UNFILTERED "any open shift" lookup with
+    // .single(): with more than one shift open at once (e.g. a shift handoff where the
+    // previous one wasn't closed yet), .single() errors on 2+ rows, so shiftId silently
+    // came back undefined and the cash payment's total never made it into total_efectivo -
+    // the payment itself still saved, so it wasn't visibly lost, but "En Caja (Teórico)"
+    // stayed short by that amount for the shift it actually belonged to.
+    const shiftId = payment.turno_id;
 
     // 2. Insert Payment
     // Destructure force away so it doesn't hit the DB
@@ -269,10 +259,7 @@ export async function registerPayment(payment: Omit<Payment, 'id'> & { force?: b
 
     const { error: insertError } = await supabase
         .from('payments')
-        .insert({
-            ...paymentData,
-            turno_id: shiftId // Attribute to ANY open shift found
-        });
+        .insert(paymentData);
 
     if (insertError) {
         console.error('Error inserting payment', insertError);
@@ -384,13 +371,17 @@ export async function registerPayment(payment: Omit<Payment, 'id'> & { force?: b
         }
     }
 
-    // 4. Update Shift Cash if needed
+    // 4. Update Shift Cash if needed - read this specific shift's live total right before
+    // writing, rather than reusing a value read back in step 1 before the insert above.
     if (shiftId && payment.metodo_pago === 'efectivo') {
-        const newTotal = (currentShift?.total_efectivo || 0) + payment.total;
-        const { error: shiftError } = await supabase.from('shifts').update({ total_efectivo: newTotal }).eq('id', shiftId);
-        if (shiftError) {
-            console.error('Error updating shift cash', shiftError);
-            // We don't fail the whole operation since payment matches, but audit log would be nice
+        const { data: shift } = await supabase.from('shifts').select('total_efectivo').eq('id', shiftId).single();
+        if (shift) {
+            const newTotal = (shift.total_efectivo || 0) + payment.total;
+            const { error: shiftError } = await supabase.from('shifts').update({ total_efectivo: newTotal }).eq('id', shiftId);
+            if (shiftError) {
+                console.error('Error updating shift cash', shiftError);
+                // We don't fail the whole operation since payment matches, but audit log would be nice
+            }
         }
     }
 
@@ -500,11 +491,13 @@ export async function deletePaymentAdmin(paymentId: string): Promise<{ success: 
         }
     }
 
-    // 3. Subtract from open shift if it matches the current shift
+    // 3. Subtract from its shift's cash total, but only while that shift is still open -
+    // once closed, total_efectivo holds the physically-counted amount (see getShiftHistory),
+    // which a deleted payment shouldn't retroactively change.
     if (payment.turno_id && payment.metodo_pago === 'efectivo') {
-        const currentShift = await getCurrentShift();
-        if (currentShift && currentShift.id === payment.turno_id) {
-            const newTotal = Math.max(0, (currentShift.total_efectivo || 0) - payment.total);
+        const { data: shift } = await supabase.from('shifts').select('total_efectivo, estatus').eq('id', payment.turno_id).single();
+        if (shift && shift.estatus === 'abierto') {
+            const newTotal = Math.max(0, (shift.total_efectivo || 0) - payment.total);
             await supabase.from('shifts').update({ total_efectivo: newTotal }).eq('id', payment.turno_id);
         }
     }
