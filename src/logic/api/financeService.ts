@@ -1,5 +1,5 @@
 import { supabase, fetchAllRows } from './supabase';
-import type { Payment, Shift, Expense } from '../../domain/types';
+import type { Payment, Shift, Expense, CashCount } from '../../domain/types';
 import { calculateNominalExpiration, startOfLocalDay, endOfLocalDay } from '../../domain/dateUtils';
 
 export interface PaymentWithDetails extends Payment {
@@ -223,6 +223,51 @@ export async function openShift(userId: string, initialCash: number): Promise<bo
         return false;
     }
     return true;
+}
+
+// Lets an admin run the "Arqueo de Caja" close-out for a collaborator's shift by id, for when
+// they had to leave before doing it themselves - same close as shiftContext.tsx's closeShift,
+// just not tied to the logged-in user's own shift.
+export async function closeShiftAsAdmin(
+    shiftId: string,
+    cashCount: CashCount,
+    totalDeclared: number,
+    nextFundCashCount: CashCount,
+    nextFundTotal: number
+): Promise<{ success: boolean; difference?: number; message?: string }> {
+    const { data: shift, error: fetchError } = await supabase
+        .from('shifts')
+        .select('total_efectivo, estatus')
+        .eq('id', shiftId)
+        .single();
+
+    if (fetchError || !shift) {
+        return { success: false, message: 'No se encontró el turno.' };
+    }
+    if (shift.estatus !== 'abierto') {
+        return { success: false, message: 'Este turno ya está cerrado.' };
+    }
+
+    const difference = totalDeclared - (shift.total_efectivo || 0);
+
+    const { error } = await supabase
+        .from('shifts')
+        .update({
+            estatus: 'cerrado',
+            hora_cierre: new Date().toISOString(),
+            total_efectivo: totalDeclared,
+            desglose_cierre: cashCount,
+            fondo_siguiente_turno: nextFundTotal,
+            desglose_fondo_siguiente: nextFundCashCount
+        })
+        .eq('id', shiftId);
+
+    if (error) {
+        console.error('Error closing shift as admin', error);
+        return { success: false, message: 'Error al cerrar el turno.' };
+    }
+
+    return { success: true, difference };
 }
 
 export async function registerPayment(payment: Omit<Payment, 'id'> & { force?: boolean }): Promise<{ success: boolean; message?: string }> {
