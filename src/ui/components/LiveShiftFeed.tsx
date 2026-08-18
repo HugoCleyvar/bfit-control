@@ -1,14 +1,17 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '../../logic/api/supabase';
-import { getActiveShifts, getRecentShiftMovements, type ShiftMovement } from '../../logic/api/financeService';
+import { getActiveShifts, getRecentShiftMovements, closeShiftAsAdmin, type ShiftMovement } from '../../logic/api/financeService';
 import type { Shift, Payment } from '../../domain/types';
 import { ArrowUpCircle, ArrowDownCircle, Loader2 } from 'lucide-react';
+import { CloseShiftModal } from './CloseShiftModal';
 
 interface OpenShiftInfo {
     colaboradorId: string;
     horario: Shift['horario'];
     horaInicio: string;
     totalEfectivo: number;
+    montoInicial: number;
+    retiros: number;
 }
 
 interface FeedItem extends ShiftMovement {
@@ -23,6 +26,7 @@ export default function LiveShiftFeed() {
     const [profileNames, setProfileNames] = useState<Record<string, string>>({});
     const [items, setItems] = useState<FeedItem[]>([]);
     const [loading, setLoading] = useState(true);
+    const [closingShiftId, setClosingShiftId] = useState<string | null>(null);
 
     const highlightTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
     const memberNameCache = useRef<Map<string, string>>(new Map());
@@ -68,7 +72,9 @@ export default function LiveShiftFeed() {
                     colaboradorId: s.colaborador_id,
                     horario: s.horario,
                     horaInicio: s.hora_inicio,
-                    totalEfectivo: s.total_efectivo
+                    totalEfectivo: s.total_efectivo,
+                    montoInicial: s.monto_inicial,
+                    retiros: s.retiros
                 };
             });
             setOpenShifts(shiftsMap);
@@ -91,7 +97,7 @@ export default function LiveShiftFeed() {
     useEffect(() => {
         const channel = supabase
             .channel('admin-live-shift-feed')
-            .on<{ id: string; colaborador_id: string; horario: Shift['horario']; hora_inicio: string; total_efectivo: number; estatus: string }>(
+            .on<{ id: string; colaborador_id: string; horario: Shift['horario']; hora_inicio: string; total_efectivo: number; monto_inicial: number; retiros: number; estatus: string }>(
                 'postgres_changes',
                 { event: 'INSERT', schema: 'public', table: 'shifts' },
                 (payload) => {
@@ -103,12 +109,14 @@ export default function LiveShiftFeed() {
                             colaboradorId: row.colaborador_id,
                             horario: row.horario,
                             horaInicio: row.hora_inicio,
-                            totalEfectivo: row.total_efectivo
+                            totalEfectivo: row.total_efectivo,
+                            montoInicial: row.monto_inicial,
+                            retiros: row.retiros
                         }
                     }));
                 }
             )
-            .on<{ id: string; estatus: string; total_efectivo: number }>(
+            .on<{ id: string; estatus: string; total_efectivo: number; retiros: number }>(
                 'postgres_changes',
                 { event: 'UPDATE', schema: 'public', table: 'shifts' },
                 (payload) => {
@@ -121,7 +129,7 @@ export default function LiveShiftFeed() {
                             return next;
                         }
                         if (!prev[row.id]) return prev;
-                        return { ...prev, [row.id]: { ...prev[row.id], totalEfectivo: row.total_efectivo } };
+                        return { ...prev, [row.id]: { ...prev[row.id], totalEfectivo: row.total_efectivo, retiros: row.retiros } };
                     });
                 }
             )
@@ -172,8 +180,10 @@ export default function LiveShiftFeed() {
     }, []);
 
     const shiftEntries = Object.entries(openShifts);
+    const closingShift = closingShiftId ? openShifts[closingShiftId] : undefined;
 
     return (
+        <>
         <div style={{ backgroundColor: 'var(--color-card)', borderRadius: 'var(--radius-lg)', padding: 'var(--spacing-lg)' }}>
             {shiftEntries.length === 0 ? (
                 <div style={{ color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>No hay turnos activos en este momento.</div>
@@ -195,6 +205,12 @@ export default function LiveShiftFeed() {
                             <div style={{ marginLeft: '10px', fontSize: '18px', fontWeight: 'bold', color: 'var(--color-success)' }}>
                                 ${s.totalEfectivo.toLocaleString()}
                             </div>
+                            <button
+                                onClick={() => setClosingShiftId(shiftId)}
+                                style={{ padding: '6px 12px', fontSize: '12px', backgroundColor: 'var(--color-danger)', borderRadius: '6px', whiteSpace: 'nowrap' }}
+                            >
+                                Cerrar Turno
+                            </button>
                         </div>
                     ))}
                 </div>
@@ -236,5 +252,29 @@ export default function LiveShiftFeed() {
                 </div>
             )}
         </div>
+
+        {closingShiftId && closingShift && (
+            <CloseShiftModal
+                title={`Cerrar Turno de ${profileNames[closingShift.colaboradorId] || 'Colaborador'}`}
+                shift={{
+                    total_efectivo: closingShift.totalEfectivo,
+                    monto_inicial: closingShift.montoInicial,
+                    retiros: closingShift.retiros
+                }}
+                onCancel={() => setClosingShiftId(null)}
+                onConfirm={(cashCount, countedCash, nextFundCashCount, nextFundTotal) =>
+                    closeShiftAsAdmin(closingShiftId, cashCount, countedCash, nextFundCashCount, nextFundTotal)
+                }
+                onClosed={() => {
+                    setOpenShifts((prev) => {
+                        const next = { ...prev };
+                        delete next[closingShiftId];
+                        return next;
+                    });
+                    setClosingShiftId(null);
+                }}
+            />
+        )}
+        </>
     );
 }

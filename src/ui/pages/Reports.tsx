@@ -1,15 +1,15 @@
 import { useEffect, useState, useCallback } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
-import { getIncomeSummary, getShiftHistory, getDailyPerformanceSummary, getMonthlyPerformanceSummary, getRevenueByShiftType } from '../../logic/api/financeService';
+import { getIncomeSummary, getShiftHistory, getDailyPerformanceSummary, getMonthlyPerformanceSummary, getRevenueByShiftType, getSalesByCollaborator } from '../../logic/api/financeService';
 import { getActiveMemberCount, getActiveMembersByPlan, getNewMembersByMonth, getChurnedMembers, getExpiredMembersWithUnpaidAttendance } from '../../logic/api/memberService';
 import { getDailyAttendanceByShift } from '../../logic/api/attendanceService';
 import { getExpiringMembers } from '../../logic/api/gamificationService';
 import { startOfLocalDay, endOfLocalDay } from '../../domain/dateUtils';
-import type { DailyReportRow, MonthlyReportRow, ShiftHistoryRow, ShiftTypeRevenue } from '../../logic/api/financeService';
+import type { DailyReportRow, MonthlyReportRow, ShiftHistoryRow, ShiftTypeRevenue, CollaboratorSales } from '../../logic/api/financeService';
 import type { PlanMemberCount, NewMembersRow, ChurnedMember, UnpaidAttendanceAlert } from '../../logic/api/memberService';
 import type { ExpiringMember } from '../../logic/api/gamificationService';
 
-import { TrendingUp, Users, Clock, Tag, UserPlus, UserMinus, AlertTriangle, CalendarClock } from 'lucide-react';
+import { TrendingUp, Users, Clock, Tag, UserPlus, UserMinus, AlertTriangle, CalendarClock, Briefcase } from 'lucide-react';
 import { BarChart as RechartsBarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 function formatMoney(amount: number): string {
@@ -286,6 +286,7 @@ function ResumenTab() {
             <AttendanceSection />
             <IncomeSection />
             <ShiftTypeSection />
+            <CollaboratorSection />
             <MembershipTypeSection />
         </div>
     );
@@ -545,6 +546,55 @@ function ShiftTypeSection() {
                             <b style={{ color: 'var(--color-success)' }}>${formatMoney(revenue.vespertino)}</b>
                         </div>
                     </div>
+                </div>
+            )}
+        </section>
+    );
+}
+
+function CollaboratorSection() {
+    const [range, setRange] = useState<DateRange>(() => quickPresetRange('30d'));
+    const [data, setData] = useState<CollaboratorSales[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        setLoading(true);
+        getSalesByCollaborator(range.from, range.to).then(res => {
+            setData(res);
+            setLoading(false);
+        });
+    }, [range]);
+
+    return (
+        <section>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: 'var(--spacing-md)' }}>
+                {sectionHeading(<Briefcase color="var(--color-accent)" />, 'Ventas por Colaborador')}
+                <DateRangePicker range={range} onChange={setRange} />
+            </div>
+            {loading ? (
+                <div style={{ padding: '30px', textAlign: 'center', color: 'var(--color-text-secondary)' }}>Cargando...</div>
+            ) : data.length === 0 ? (
+                <div style={{ padding: '20px', fontStyle: 'italic', color: 'var(--color-text-secondary)' }}>No hay ventas registradas en este periodo.</div>
+            ) : (
+                <div style={{ overflowX: 'auto', backgroundColor: 'var(--color-card)', borderRadius: '12px', padding: '10px' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '500px', fontSize: '14px' }}>
+                        <thead>
+                            <tr style={{ textAlign: 'left', color: 'var(--color-text-secondary)', borderBottom: '1px solid var(--color-border)' }}>
+                                <th style={{ padding: '12px' }}>Colaborador</th>
+                                <th style={{ padding: '12px', fontWeight: 'bold' }}>Ventas</th>
+                                <th style={{ padding: '12px' }}># Pagos</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {data.map(c => (
+                                <tr key={c.colaboradorId} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                    <td style={{ padding: '12px', fontWeight: 'bold' }}>{c.nombre}</td>
+                                    <td style={{ padding: '12px', color: 'var(--color-success)', fontWeight: 'bold' }}>${formatMoney(c.totalVentas)}</td>
+                                    <td style={{ padding: '12px' }}>{c.numPagos}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
                 </div>
             )}
         </section>
