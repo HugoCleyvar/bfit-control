@@ -270,17 +270,17 @@ export default function Members() {
     };
 
     const openEditModal = async (member: MemberWithStatus) => {
-        // Fetch current active expiration date to pre-fill
-        const { data } = await supabase
+        // Fetch current active or latest expiration date to pre-fill
+        const { data: subs } = await supabase
             .from('subscriptions')
             .select('fecha_vencimiento')
             .eq('usuario_id', member.id)
-            .eq('estatus', 'activa')
-            .maybeSingle();
+            .order('fecha_vencimiento', { ascending: false })
+            .limit(1);
 
         const fullMember = {
             ...member,
-            fecha_vencimiento: data?.fecha_vencimiento || ''
+            fecha_vencimiento: subs?.[0]?.fecha_vencimiento || ''
         };
 
         setEditingMember(fullMember);

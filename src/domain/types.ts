@@ -100,6 +100,9 @@ export interface Shift {
     monto_inicial: number;
     retiros: number;
     desglose_cierre?: CashCount;
+    inventario_apertura?: Record<string, any>;
+    inventario_cierre?: Record<string, any>;
     estatus: 'abierto' | 'cerrado';
     validado_admin?: boolean;
 }
+

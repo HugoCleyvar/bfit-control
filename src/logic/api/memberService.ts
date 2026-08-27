@@ -1,5 +1,6 @@
 import { supabase, fetchAllRows } from './supabase';
 import type { Member, Subscription } from '../../domain/types';
+import { parseLocalDate, formatLocalDateToYMD } from '../../domain/dateUtils';
 
 export interface MemberWithStatus extends Member {
     subscriptionStatus: 'activa' | 'vencida' | 'cancelada' | 'sin_suscripcion';
@@ -27,7 +28,7 @@ export async function getMembers(limit = 50): Promise<MemberWithStatus[]> {
         return [];
     }
 
-    return mapMembersWithStatus(data);
+    return mapMembersWithStatus(data || []);
 }
 
 export async function getMembersCount(): Promise<number> {
@@ -43,15 +44,12 @@ export async function getMembersCount(): Promise<number> {
 }
 
 export async function getActiveMemberCount(): Promise<number> {
-    const today = new Date().toISOString();
-    // Count distinct users with active valid subscription
-    // Since Supabase doesn't support easy 'distinct' in count without raw sql or RPC,
-    // we will count active subscriptions. It's a close enough proxy.
+    const todayStr = formatLocalDateToYMD(new Date());
     const { count, error } = await supabase
         .from('subscriptions')
         .select('*', { count: 'exact', head: true })
-        .eq('estatus', 'activa')
-        .gt('fecha_vencimiento', today);
+        .neq('estatus', 'cancelada')
+        .gte('fecha_vencimiento', todayStr);
 
     if (error) return 0;
     return count || 0;
@@ -65,7 +63,6 @@ export async function searchMembers(query: string): Promise<MemberWithStatus[]> 
         .from('members')
         .select(`
             *,
-            *,
             subscriptions (*, plan:plans(nombre))
         `)
         .or(`nombre.ilike.%${query}%,apellido.ilike.%${query}%`)
@@ -76,7 +73,7 @@ export async function searchMembers(query: string): Promise<MemberWithStatus[]> 
         return [];
     }
 
-    return mapMembersWithStatus(data);
+    return mapMembersWithStatus(data || []);
 }
 
 export async function findMemberForCheckIn(query: string): Promise<MemberWithStatus | null> {
@@ -92,8 +89,6 @@ export async function findMemberForCheckIn(query: string): Promise<MemberWithSta
     }
 
     // 2. Try by Name (Partial match)
-    // We limit to 1 for check-in safety. If multiple match, we might need UI handling, 
-    // but for now we take the first strict match.
     const { data: byName } = await supabase
         .from('members')
         .select(`*, subscriptions (*, plan:plans(nombre))`)
@@ -114,51 +109,40 @@ interface MemberWithSubscriptions extends Member {
 export function mapMembersWithStatus(data: MemberWithSubscriptions[]): MemberWithStatus[] {
     const today = new Date();
 
-    return data.map((member) => {
-        // Find the relevant subscription (active or latest)
-        // IMPORTANT: Sort by fecha_vencimiento DESC first, then prioritize
-        // active subscriptions with FUTURE expiration dates
-        const subs = (member.subscriptions as Subscription[])
-            .sort((a, b) => new Date(b.fecha_vencimiento).getTime() - new Date(a.fecha_vencimiento).getTime());
+    return (data || []).map((member) => {
+        const rawSubs = Array.isArray(member.subscriptions) ? member.subscriptions : [];
 
-        // First, try to find an active subscription with valid (future) expiration
-        const validActiveSub = subs.find(s => {
-            if (s.estatus !== 'activa') return false;
-            // FIX: Parse date consistent with map logic below
-            const dStr = s.fecha_vencimiento.split('T')[0];
-            const [y, m, d] = dStr.split('-').map(Number);
-            const exp = new Date(y, m - 1, d, 23, 59, 59, 999);
-            return exp > today;
+        // Sort subscriptions by expiration date DESC
+        const subs = [...rawSubs].sort((a, b) => {
+            const expA = parseLocalDate(a.fecha_vencimiento, true).getTime();
+            const expB = parseLocalDate(b.fecha_vencimiento, true).getTime();
+            return expB - expA;
         });
 
-        // Fallback to latest subscription regardless of status
-        const latestSub = subs[0];
+        // 1. Priority: Find active unexpired subscription (not cancelled)
+        const validActiveSub = subs.find(s => {
+            if (s.estatus === 'cancelada') return false;
+            const exp = parseLocalDate(s.fecha_vencimiento, true);
+            return exp >= today;
+        });
 
+        // 2. Fallback to latest subscription
+        const latestSub = subs[0];
         const targetSub = validActiveSub || latestSub;
 
         let status: MemberWithStatus['subscriptionStatus'] = 'sin_suscripcion';
         let daysResult = 0;
 
         if (targetSub) {
-            // FIX: Parse date as LOCAL time start of day
-            // "2024-02-06T..." -> "2024-02-06"
-            const dateOnly = targetSub.fecha_vencimiento.split('T')[0];
-            const [y, m, d] = dateOnly.split('-').map(Number);
-
-            // Set to End of Day in Local Time (23:59:59.999)
-            // Month is 0-indexed in JS Date
-            const expirationDate = new Date(y, m - 1, d, 23, 59, 59, 999);
-
+            const expirationDate = parseLocalDate(targetSub.fecha_vencimiento, true);
             const diffTime = expirationDate.getTime() - today.getTime();
             daysResult = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-            // Logic: readable expiration status
-            if (expirationDate < today) {
-                status = 'vencida';
-            } else if (targetSub.estatus === 'cancelada') {
+            if (targetSub.estatus === 'cancelada') {
                 status = 'cancelada';
+            } else if (expirationDate < today) {
+                status = 'vencida';
             } else {
-                // Computed active if date is valid (overrides 'vencida' in DB)
                 status = 'activa';
             }
         }
@@ -177,7 +161,7 @@ export function mapMembersWithStatus(data: MemberWithSubscriptions[]): MemberWit
             currentPlanName: targetSub?.plan?.nombre,
             subscriptionEndDate: targetSub?.fecha_vencimiento,
             visitas_disponibles: member.visitas_disponibles,
-            ultima_visita: member.ultima_visita // Pass through for check-in logic
+            ultima_visita: member.ultima_visita
         };
     });
 }
@@ -225,6 +209,10 @@ export async function updateMember(id: string, updates: Partial<Member>): Promis
 }
 
 export async function updateSubscriptionExpiration(memberId: string, newDate: string, planId?: string): Promise<boolean> {
+    const expDate = parseLocalDate(newDate, true);
+    const isFutureOrToday = expDate >= new Date();
+    const cleanDateStr = formatLocalDateToYMD(expDate);
+
     // 1. Find active or latest sub
     const { data: subs } = await supabase
         .from('subscriptions')
@@ -236,16 +224,14 @@ export async function updateSubscriptionExpiration(memberId: string, newDate: st
     const targetSub = subs?.[0];
 
     if (!targetSub) {
-        // If no sub exists, we need to create one.
         let targetPlanId = planId;
 
-        // If no planId provided, try to find a "Standard" or "Mensual" plan as fallback
         if (!targetPlanId) {
             const { data: plans } = await supabase
                 .from('plans')
                 .select('id')
                 .eq('activo', true)
-                .order('precio', { ascending: true }) // Assume cheapest is default? Or safer to fail.
+                .order('precio', { ascending: true })
                 .limit(1);
             targetPlanId = plans?.[0]?.id;
         }
@@ -258,10 +244,15 @@ export async function updateSubscriptionExpiration(memberId: string, newDate: st
         const { error } = await supabase.from('subscriptions').insert({
             usuario_id: memberId,
             plan_id: targetPlanId,
-            fecha_inicio: new Date().toISOString(),
-            fecha_vencimiento: newDate,
-            estatus: 'activa'
+            fecha_inicio: formatLocalDateToYMD(new Date()),
+            fecha_vencimiento: cleanDateStr,
+            estatus: isFutureOrToday ? 'activa' : 'vencida'
         });
+
+        if (isFutureOrToday) {
+            await supabase.from('members').update({ estatus: 'activo' }).eq('id', memberId);
+        }
+
         return !error;
     }
 
@@ -269,10 +260,14 @@ export async function updateSubscriptionExpiration(memberId: string, newDate: st
     const { error } = await supabase
         .from('subscriptions')
         .update({
-            fecha_vencimiento: newDate,
-            estatus: new Date(newDate) > new Date() ? 'activa' : 'vencida'
+            fecha_vencimiento: cleanDateStr,
+            estatus: isFutureOrToday ? 'activa' : 'vencida'
         })
         .eq('id', targetSub.id);
+
+    if (isFutureOrToday) {
+        await supabase.from('members').update({ estatus: 'activo' }).eq('id', memberId);
+    }
 
     return !error;
 }
@@ -444,4 +439,3 @@ export async function getExpiredMembersWithUnpaidAttendance(): Promise<UnpaidAtt
         .filter(x => x.visitDates.length > 0)
         .sort((a, b) => b.visitDates.length - a.visitDates.length);
 }
-
