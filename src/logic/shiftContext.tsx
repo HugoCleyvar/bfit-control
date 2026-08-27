@@ -6,8 +6,8 @@ import type { Shift, CashCount } from '../domain/types';
 interface ShiftContextType {
     currentShift: Shift | null;
     isLoadingShift: boolean;
-    openShift: (initialAmount: number, breakdown?: CashCount) => Promise<{ success: boolean; error?: unknown }>;
-    closeShift: (cashCount: CashCount, totalDeclared: number, nextFundCashCount?: CashCount, nextFundTotal?: number) => Promise<{ success: boolean; difference?: number; error?: unknown }>;
+    openShift: (initialAmount: number, breakdown?: CashCount, inventarioApertura?: Record<string, any>) => Promise<{ success: boolean; error?: unknown }>;
+    closeShift: (cashCount: CashCount, totalDeclared: number, nextFundCashCount?: CashCount, nextFundTotal?: number, inventarioCierre?: Record<string, any>) => Promise<{ success: boolean; difference?: number; error?: unknown }>;
     refreshShift: () => Promise<void>;
 }
 
@@ -47,24 +47,39 @@ export function ShiftProvider({ children }: { children: React.ReactNode }) {
         fetchOpenShift();
     }, [fetchOpenShift]);
 
-    const openShift = async (initialAmount: number, breakdown?: CashCount) => {
+    const openShift = async (initialAmount: number, breakdown?: CashCount, inventarioApertura?: Record<string, any>) => {
         if (!user) return { success: false, error: 'No user authenticated' };
 
         try {
-            const { data, error } = await supabase
+            const payload: any = {
+                colaborador_id: user.id,
+                monto_inicial: initialAmount,
+                desglose_apertura: breakdown,
+                hora_inicio: new Date().toISOString(),
+                estatus: 'abierto',
+                horario: new Date().getHours() < 14 ? 'matutino' : 'vespertino',
+                total_efectivo: initialAmount,
+                retiros: 0
+            };
+
+            if (inventarioApertura && Object.keys(inventarioApertura).length > 0) {
+                payload.inventario_apertura = inventarioApertura;
+            }
+
+            let { data, error } = await supabase
                 .from('shifts')
-                .insert({
-                    colaborador_id: user.id,
-                    monto_inicial: initialAmount,
-                    desglose_apertura: breakdown,
-                    hora_inicio: new Date().toISOString(),
-                    estatus: 'abierto',
-                    horario: new Date().getHours() < 14 ? 'matutino' : 'vespertino',
-                    total_efectivo: initialAmount,
-                    retiros: 0
-                })
+                .insert(payload)
                 .select()
                 .single();
+
+            // Graceful fallback if database column does not exist yet
+            if (error && error.message && error.message.includes('inventario_apertura')) {
+                console.warn('DB column inventario_apertura missing in Supabase, retrying without it...');
+                delete payload.inventario_apertura;
+                const retry = await supabase.from('shifts').insert(payload).select().single();
+                data = retry.data;
+                error = retry.error;
+            }
 
             if (error) throw error;
             setCurrentShift(data as Shift);
@@ -75,23 +90,43 @@ export function ShiftProvider({ children }: { children: React.ReactNode }) {
         }
     };
 
-    const closeShift = async (cashCount: CashCount, totalDeclared: number, nextFundCashCount?: CashCount, nextFundTotal?: number) => {
+    const closeShift = async (
+        cashCount: CashCount,
+        totalDeclared: number,
+        nextFundCashCount?: CashCount,
+        nextFundTotal?: number,
+        inventarioCierre?: Record<string, any>
+    ) => {
         if (!currentShift) return { success: false, error: 'No active shift' };
 
         try {
             const difference = totalDeclared - (currentShift.total_efectivo || 0);
 
-            const { error } = await supabase
+            const payload: any = {
+                estatus: 'cerrado',
+                hora_cierre: new Date().toISOString(),
+                total_efectivo: totalDeclared,
+                desglose_cierre: cashCount,
+                fondo_siguiente_turno: nextFundTotal,
+                desglose_fondo_siguiente: nextFundCashCount
+            };
+
+            if (inventarioCierre && Object.keys(inventarioCierre).length > 0) {
+                payload.inventario_cierre = inventarioCierre;
+            }
+
+            let { error } = await supabase
                 .from('shifts')
-                .update({
-                    estatus: 'cerrado',
-                    hora_cierre: new Date().toISOString(),
-                    total_efectivo: totalDeclared,
-                    desglose_cierre: cashCount,
-                    fondo_siguiente_turno: nextFundTotal,
-                    desglose_fondo_siguiente: nextFundCashCount
-                })
+                .update(payload)
                 .eq('id', currentShift.id);
+
+            // Graceful fallback if database column does not exist yet
+            if (error && error.message && error.message.includes('inventario_cierre')) {
+                console.warn('DB column inventario_cierre missing in Supabase, retrying without it...');
+                delete payload.inventario_cierre;
+                const retry = await supabase.from('shifts').update(payload).eq('id', currentShift.id);
+                error = retry.error;
+            }
 
             if (error) throw error;
             setCurrentShift(null);

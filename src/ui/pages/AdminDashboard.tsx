@@ -347,8 +347,8 @@ function ActiveShiftsTable() {
                     title={`Cerrar Turno de ${closingShift.profiles?.nombre || 'Colaborador'}`}
                     shift={{ total_efectivo: closingShift.total_efectivo, monto_inicial: closingShift.monto_inicial, retiros: closingShift.retiros }}
                     onCancel={() => setClosingShift(null)}
-                    onConfirm={(cashCount, countedCash, nextFundCashCount, nextFundTotal) =>
-                        closeShiftAsAdmin(closingShift.id, cashCount, countedCash, nextFundCashCount, nextFundTotal)
+                    onConfirm={(cashCount, countedCash, nextFundCashCount, nextFundTotal, inventarioCierre) =>
+                        closeShiftAsAdmin(closingShift.id, cashCount, countedCash, nextFundCashCount, nextFundTotal, inventarioCierre)
                     }
                     onClosed={() => {
                         setClosingShift(null);
