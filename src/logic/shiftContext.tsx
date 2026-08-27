@@ -6,8 +6,8 @@ import type { Shift, CashCount } from '../domain/types';
 interface ShiftContextType {
     currentShift: Shift | null;
     isLoadingShift: boolean;
-    openShift: (initialAmount: number, breakdown?: CashCount, inventarioApertura?: Record<string, any>) => Promise<{ success: boolean; error?: unknown }>;
-    closeShift: (cashCount: CashCount, totalDeclared: number, nextFundCashCount?: CashCount, nextFundTotal?: number, inventarioCierre?: Record<string, any>) => Promise<{ success: boolean; difference?: number; error?: unknown }>;
+    openShift: (initialAmount: number, breakdown?: CashCount) => Promise<{ success: boolean; error?: unknown }>;
+    closeShift: (cashCount: CashCount, totalDeclared: number, nextFundCashCount?: CashCount, nextFundTotal?: number) => Promise<{ success: boolean; difference?: number; error?: unknown }>;
     refreshShift: () => Promise<void>;
 }
 
@@ -19,9 +19,6 @@ export function ShiftProvider({ children }: { children: React.ReactNode }) {
     const [isLoadingShift, setIsLoadingShift] = useState(false);
 
     const fetchOpenShift = useCallback(async () => {
-        // Only fetch if authenticated and (strictly speaking) if user might have shifts. 
-        // Admins might not *have* shifts but might want to see? 
-        // Logic currently: eq('colaborador_id', user.id). So only their own shifts.
         if (!isAuthenticated || !user) {
             setCurrentShift(null);
             return;
@@ -34,10 +31,11 @@ export function ShiftProvider({ children }: { children: React.ReactNode }) {
                 .select('*')
                 .eq('colaborador_id', user.id)
                 .eq('estatus', 'abierto')
-                .maybeSingle();
+                .order('hora_inicio', { ascending: false })
+                .limit(1);
 
             if (error) throw error;
-            setCurrentShift(data as Shift);
+            setCurrentShift(data && data.length > 0 ? (data[0] as Shift) : null);
         } catch (err) {
             console.error('Error fetching shift:', err);
         } finally {
@@ -49,8 +47,8 @@ export function ShiftProvider({ children }: { children: React.ReactNode }) {
         fetchOpenShift();
     }, [fetchOpenShift]);
 
-    const openShift = async (initialAmount: number, breakdown?: CashCount, inventarioApertura?: Record<string, any>) => {
-        if (!user) return { success: false, error: 'No user' };
+    const openShift = async (initialAmount: number, breakdown?: CashCount) => {
+        if (!user) return { success: false, error: 'No user authenticated' };
 
         try {
             const { data, error } = await supabase
@@ -59,12 +57,10 @@ export function ShiftProvider({ children }: { children: React.ReactNode }) {
                     colaborador_id: user.id,
                     monto_inicial: initialAmount,
                     desglose_apertura: breakdown,
-                    inventario_apertura: inventarioApertura,
-                    // 'hora_inicio' matches DB schema
                     hora_inicio: new Date().toISOString(),
                     estatus: 'abierto',
                     horario: new Date().getHours() < 14 ? 'matutino' : 'vespertino',
-                    total_efectivo: 0,
+                    total_efectivo: initialAmount,
                     retiros: 0
                 })
                 .select()
@@ -79,11 +75,11 @@ export function ShiftProvider({ children }: { children: React.ReactNode }) {
         }
     };
 
-        const closeShift = async (cashCount: CashCount, totalDeclared: number, nextFundCashCount?: CashCount, nextFundTotal?: number, inventarioCierre?: Record<string, any>) => {
+    const closeShift = async (cashCount: CashCount, totalDeclared: number, nextFundCashCount?: CashCount, nextFundTotal?: number) => {
         if (!currentShift) return { success: false, error: 'No active shift' };
 
         try {
-            const difference = totalDeclared - currentShift.total_efectivo;
+            const difference = totalDeclared - (currentShift.total_efectivo || 0);
 
             const { error } = await supabase
                 .from('shifts')
@@ -91,10 +87,9 @@ export function ShiftProvider({ children }: { children: React.ReactNode }) {
                     estatus: 'cerrado',
                     hora_cierre: new Date().toISOString(),
                     total_efectivo: totalDeclared,
-                    desglose_cierre: cashCount, // Store breakdown
+                    desglose_cierre: cashCount,
                     fondo_siguiente_turno: nextFundTotal,
-                    desglose_fondo_siguiente: nextFundCashCount,
-                    inventario_cierre: inventarioCierre
+                    desglose_fondo_siguiente: nextFundCashCount
                 })
                 .eq('id', currentShift.id);
 
