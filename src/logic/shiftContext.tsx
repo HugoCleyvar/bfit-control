@@ -6,8 +6,8 @@ import type { Shift, CashCount } from '../domain/types';
 interface ShiftContextType {
     currentShift: Shift | null;
     isLoadingShift: boolean;
-    openShift: (initialAmount: number, breakdown?: CashCount) => Promise<{ success: boolean; error?: unknown }>;
-    closeShift: (cashCount: CashCount, totalDeclared: number, nextFundCashCount?: CashCount, nextFundTotal?: number) => Promise<{ success: boolean; difference?: number; error?: unknown }>;
+    openShift: (initialAmount: number, breakdown?: CashCount, inventarioApertura?: Record<string, any>) => Promise<{ success: boolean; error?: unknown }>;
+    closeShift: (cashCount: CashCount, totalDeclared: number, nextFundCashCount?: CashCount, nextFundTotal?: number, inventarioCierre?: Record<string, any>) => Promise<{ success: boolean; difference?: number; error?: unknown }>;
     refreshShift: () => Promise<void>;
 }
 
@@ -49,7 +49,7 @@ export function ShiftProvider({ children }: { children: React.ReactNode }) {
         fetchOpenShift();
     }, [fetchOpenShift]);
 
-    const openShift = async (initialAmount: number, breakdown?: CashCount) => {
+    const openShift = async (initialAmount: number, breakdown?: CashCount, inventarioApertura?: Record<string, any>) => {
         if (!user) return { success: false, error: 'No user' };
 
         try {
@@ -59,6 +59,7 @@ export function ShiftProvider({ children }: { children: React.ReactNode }) {
                     colaborador_id: user.id,
                     monto_inicial: initialAmount,
                     desglose_apertura: breakdown,
+                    inventario_apertura: inventarioApertura,
                     // 'hora_inicio' matches DB schema
                     hora_inicio: new Date().toISOString(),
                     estatus: 'abierto',
@@ -78,7 +79,7 @@ export function ShiftProvider({ children }: { children: React.ReactNode }) {
         }
     };
 
-        const closeShift = async (cashCount: CashCount, totalDeclared: number, nextFundCashCount?: CashCount, nextFundTotal?: number) => {
+        const closeShift = async (cashCount: CashCount, totalDeclared: number, nextFundCashCount?: CashCount, nextFundTotal?: number, inventarioCierre?: Record<string, any>) => {
         if (!currentShift) return { success: false, error: 'No active shift' };
 
         try {
@@ -92,7 +93,8 @@ export function ShiftProvider({ children }: { children: React.ReactNode }) {
                     total_efectivo: totalDeclared,
                     desglose_cierre: cashCount, // Store breakdown
                     fondo_siguiente_turno: nextFundTotal,
-                    desglose_fondo_siguiente: nextFundCashCount
+                    desglose_fondo_siguiente: nextFundCashCount,
+                    inventario_cierre: inventarioCierre
                 })
                 .eq('id', currentShift.id);
 

@@ -27,9 +27,9 @@ export function MemberForm({ initialData, onSubmit, onCancel, title, showExpirat
         nombre: initialData?.nombre || '',
         apellido: initialData?.apellido || '',
         telefono: initialData?.telefono || '',
-        fecha_nacimiento: initialData?.fecha_nacimiento ? new Date(initialData.fecha_nacimiento).toISOString().split('T')[0] : '',
+        fecha_nacimiento: initialData?.fecha_nacimiento ? initialData.fecha_nacimiento.split('T')[0] : '',
         foto_url: initialData?.foto_url || '',
-        fecha_vencimiento: initialData?.fecha_vencimiento ? new Date(initialData.fecha_vencimiento).toISOString().split('T')[0] : ''
+        fecha_vencimiento: initialData?.fecha_vencimiento ? initialData.fecha_vencimiento.split('T')[0] : ''
     }), [initialData]);
 
     const [formData, setFormData] = useState<MemberFormData>(initialFormData);

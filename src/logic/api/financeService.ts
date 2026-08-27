@@ -1,6 +1,13 @@
 import { supabase, fetchAllRows } from './supabase';
 import type { Payment, Shift, Expense, CashCount } from '../../domain/types';
-import { calculateNominalExpiration, startOfLocalDay, endOfLocalDay } from '../../domain/dateUtils';
+import {
+    calculateInitialExpiration,
+    calculateRenewalExpiration,
+    parseLocalDate,
+    formatLocalDateToYMD,
+    startOfLocalDay,
+    endOfLocalDay,
+} from '../../domain/dateUtils';
 
 export interface PaymentWithDetails extends Payment {
     member?: { nombre: string; apellido: string; telefono?: string };
@@ -317,12 +324,18 @@ export async function registerPayment(payment: Omit<Payment, 'id'> & { force?: b
     if (payment.usuario_id && payment.plan_id) {
         try {
             // Get Plan Duration
-            const { data: plan } = await supabase.from('plans').select('nombre, duracion_dias').eq('id', payment.plan_id).single();
+            const { data: plan } = await supabase
+                .from('plans')
+                .select('nombre, duracion_dias')
+                .eq('id', payment.plan_id)
+                .single();
 
             if (plan) {
-                // TICKET LOGIC: Check if plan is a "Pack" or "Visit"
                 const normName = plan.nombre.toLowerCase();
-                if (normName.includes('visita') || normName.includes('paquete')) {
+                const isTicketPlan = normName.includes('visita') || normName.includes('paquete');
+
+                // TICKET LOGIC: Check if plan is a "Pack" or "Visit"
+                if (isTicketPlan) {
                     let ticketsToAdd = 1;
                     const match = normName.match(/(\d+)\s*visita/); // Match "10 visitas", "5 visita" etc.
                     if (match) {
@@ -330,9 +343,16 @@ export async function registerPayment(payment: Omit<Payment, 'id'> & { force?: b
                     }
 
                     if (ticketsToAdd > 0) {
-                        const { data: member } = await supabase.from('members').select('visitas_disponibles').eq('id', payment.usuario_id).single();
+                        const { data: member } = await supabase
+                            .from('members')
+                            .select('visitas_disponibles')
+                            .eq('id', payment.usuario_id)
+                            .single();
                         const newCount = (member?.visitas_disponibles || 0) + ticketsToAdd;
-                        const { error: ticketError } = await supabase.from('members').update({ visitas_disponibles: newCount }).eq('id', payment.usuario_id);
+                        const { error: ticketError } = await supabase
+                            .from('members')
+                            .update({ visitas_disponibles: newCount, estatus: 'activo' })
+                            .eq('id', payment.usuario_id);
                         if (ticketError) {
                             console.error('CRITICAL: Failed to update tickets after payment', ticketError);
                             warningMessage = 'Pago registrado, pero ERROR al asignar visitas. Verificar manualmente.';
@@ -340,73 +360,65 @@ export async function registerPayment(payment: Omit<Payment, 'id'> & { force?: b
                     }
                 }
 
-                // Get Latest Sub to decide: Extend or New
+                // Subscriptions handling: Get all subscriptions
                 const { data: subs } = await supabase
                     .from('subscriptions')
-                    .select('*')
+                    .select('*, plan:plans(*)')
                     .eq('usuario_id', payment.usuario_id)
-                    .order('fecha_vencimiento', { ascending: false })
-                    .limit(1);
+                    .order('fecha_vencimiento', { ascending: false });
 
-                const latestSub = subs?.[0];
                 const now = new Date();
+                const todayStart = parseLocalDate(formatLocalDateToYMD(now), false);
 
-                let isExtension = false;
+                // Find active unexpired subscription (not cancelled)
+                const activeSub = (subs || []).find(s => {
+                    if (s.estatus === 'cancelada') return false;
+                    const exp = parseLocalDate(s.fecha_vencimiento, true);
+                    return exp >= todayStart;
+                });
 
-                // Check if active (not expired)
-                if (latestSub) {
-                    const expiry = new Date(latestSub.fecha_vencimiento);
-                    if (expiry > now) {
-                        isExtension = true;
-                    }
-                }
+                if (isTicketPlan) {
+                    // For ticket plans: record subscription without destroying an existing monthly plan
+                    const startDate = now;
+                    const newEnd = calculateInitialExpiration(startDate, plan.duracion_dias || 1);
+                    const { error: subError } = await supabase.from('subscriptions').insert({
+                        usuario_id: payment.usuario_id,
+                        plan_id: payment.plan_id,
+                        fecha_inicio: formatLocalDateToYMD(startDate),
+                        fecha_vencimiento: formatLocalDateToYMD(newEnd),
+                        estatus: 'activa'
+                    });
+                    if (subError) console.error('Error recording ticket subscription', subError);
+                } else if (activeSub) {
+                    // EXTEND existing active subscription
+                    const currentExp = parseLocalDate(activeSub.fecha_vencimiento, true);
+                    const newEnd = calculateRenewalExpiration(currentExp, plan.duracion_dias);
 
-                // DATE LOGIC: Date-to-Date (Month + 1 - 1 Day)
-                // Base date is either Now (New) or Expiry (Extension)
-                let baseDate = isExtension && latestSub ? new Date(latestSub.fecha_vencimiento) : now;
-
-                // Use the nominal expiration logic for plans of 28+ days (monthly approx)
-                let newEnd: Date;
-                if (plan.duracion_dias >= 28) {
-                    const monthsToAdd = Math.round(plan.duracion_dias / 30);
-                    newEnd = calculateNominalExpiration(baseDate, monthsToAdd);
-                } else {
-                    // Short term plans - add days
-                    newEnd = new Date(baseDate.getTime() + (plan.duracion_dias * 24 * 60 * 60 * 1000));
-                }
-
-                // Safety: Ensure newEnd is effectively in the future
-                if (newEnd <= baseDate) {
-                    newEnd = new Date(baseDate.getTime() + (plan.duracion_dias * 24 * 60 * 60 * 1000));
-                }
-
-
-                if (isExtension && latestSub) {
-                    // EXTEND existing
                     const { error: subError } = await supabase.from('subscriptions').update({
-                        fecha_vencimiento: newEnd.toISOString(),
-                        estatus: 'activa', // Ensure active
-                        plan_id: payment.plan_id // Switch plan if changed
-                    }).eq('id', latestSub.id);
+                        fecha_vencimiento: formatLocalDateToYMD(newEnd),
+                        estatus: 'activa',
+                        plan_id: payment.plan_id
+                    }).eq('id', activeSub.id);
 
                     if (subError) throw subError;
-
                 } else {
-                    // NEW Subscription
+                    // NEW OR REACTIVATED subscription
                     const startDate = now;
-                    // If new, start now, end at calculated date
-                    // Note: If Base was 'Now', newEnd is already correct relative to now.
+                    const newEnd = calculateInitialExpiration(startDate, plan.duracion_dias);
 
                     const { error: subError } = await supabase.from('subscriptions').insert({
                         usuario_id: payment.usuario_id,
                         plan_id: payment.plan_id,
-                        fecha_inicio: startDate.toISOString(),
-                        fecha_vencimiento: newEnd.toISOString(),
+                        fecha_inicio: formatLocalDateToYMD(startDate),
+                        fecha_vencimiento: formatLocalDateToYMD(newEnd),
                         estatus: 'activa'
                     });
 
                     if (subError) throw subError;
                 }
+
+                // Ensure member is marked as active in members table
+                await supabase.from('members').update({ estatus: 'activo' }).eq('id', payment.usuario_id);
             } else {
                 warningMessage = 'Pago registrado, pero NO se encontró el plan para actualizar la suscripción.';
             }
@@ -430,11 +442,10 @@ export async function registerPayment(payment: Omit<Payment, 'id'> & { force?: b
         }
     }
 
-    if (warningMessage) {
-        return { success: true, message: warningMessage };
-    }
-
-    return { success: true };
+    return {
+        success: true,
+        message: warningMessage || undefined
+    };
 }
 
 // Chart Data: Revenue last 7 days
@@ -483,7 +494,7 @@ export async function getWeeklyRevenue(): Promise<{ date: string; total: number 
     }));
 }
 
-export async function deletePaymentAdmin(paymentId: string): Promise<{ success: boolean; message?: string }> {
+export async function deletePaymentAdmin(paymentId: string): Promise<{ success: boolean; message: string }> {
     // 1. Fetch the payment
     const { data: payment } = await supabase.from('payments').select('*').eq('id', paymentId).single();
     if (!payment) return { success: false, message: 'Pago no encontrado.' };
@@ -516,7 +527,7 @@ export async function deletePaymentAdmin(paymentId: string): Promise<{ success: 
 
                 const latestSub = subs?.[0];
                 if (latestSub) {
-                    let oldEnd = new Date(latestSub.fecha_vencimiento);
+                    let oldEnd = parseLocalDate(latestSub.fecha_vencimiento, true);
                     if (plan.duracion_dias >= 28) {
                         const monthsToSub = Math.round(plan.duracion_dias / 30);
                         let year = oldEnd.getFullYear();
@@ -525,12 +536,13 @@ export async function deletePaymentAdmin(paymentId: string): Promise<{ success: 
                             year--;
                             month += 12;
                         }
-                        oldEnd.setFullYear(year);
-                        oldEnd.setMonth(month);
+                        const daysInMonth = new Date(year, month + 1, 0).getDate();
+                        const targetDay = Math.min(oldEnd.getDate(), daysInMonth);
+                        oldEnd = new Date(year, month, targetDay, 23, 59, 59, 999);
                     } else {
                         oldEnd = new Date(oldEnd.getTime() - (plan.duracion_dias * 24 * 60 * 60 * 1000));
                     }
-                    await supabase.from('subscriptions').update({ fecha_vencimiento: oldEnd.toISOString() }).eq('id', latestSub.id);
+                    await supabase.from('subscriptions').update({ fecha_vencimiento: formatLocalDateToYMD(oldEnd) }).eq('id', latestSub.id);
                 }
             }
         }

@@ -715,6 +715,7 @@ function ShiftHistoryTable() {
                         <th style={{ padding: '12px' }}>Total Esperado</th>
                         <th style={{ padding: '12px' }}>Declarado</th>
                         <th style={{ padding: '12px' }}>Diferencia</th>
+                        <th style={{ padding: '12px' }} title="Estado del Inventario Físico">Inv.</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -743,6 +744,17 @@ function ShiftHistoryTable() {
                         const diff = declared - expected;
                         const diffColor = diff === 0 ? 'var(--color-text-secondary)' : diff < 0 ? 'var(--color-danger)' : 'var(--color-success)';
 
+                        // Inventory discrepancy
+                        let hasInvDiff = false;
+                        if (shift.inventario_cierre) {
+                            try {
+                                const inv = typeof shift.inventario_cierre === 'string' ? JSON.parse(shift.inventario_cierre) : shift.inventario_cierre;
+                                hasInvDiff = Object.values(inv).some((item: any) => item && typeof item === 'object' && item.diff !== 0);
+                            } catch (e) {
+                                console.error('Error parsing inventory closing count', e);
+                            }
+                        }
+
                         return (
                             <tr key={shift.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                                 <td style={{ padding: '12px' }}>
@@ -757,6 +769,9 @@ function ShiftHistoryTable() {
                                 <td style={{ padding: '12px' }}>${formatMoney(declared)}</td>
                                 <td style={{ padding: '12px', color: diffColor, fontWeight: 'bold' }}>
                                     {diff > 0 ? '+' : ''}${formatMoney(diff)}
+                                </td>
+                                <td style={{ padding: '12px', textAlign: 'center' }} title={hasInvDiff ? 'Se encontraron diferencias en el inventario al cerrar' : 'Inventario cuadrado o no reportado'}>
+                                    {shift.inventario_cierre ? (hasInvDiff ? '⚠️' : '✅') : '-'}
                                 </td>
                             </tr>
                         );
