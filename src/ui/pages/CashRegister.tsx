@@ -5,9 +5,7 @@ import { useShift } from '../../logic/shiftContext';
 import type { Expense, CashCount } from '../../domain/types';
 import { DenominationCounter } from '../components/DenominationCounter';
 import { CloseShiftModal } from '../components/CloseShiftModal';
-import { InventoryCounter } from '../components/InventoryCounter';
-import { getProducts, type Product } from '../../logic/api/productService';
-import { Lock, Unlock, DollarSign, PlusCircle, MinusCircle, History, Package } from 'lucide-react';
+import { Lock, Unlock, DollarSign, PlusCircle, MinusCircle, History } from 'lucide-react';
 
 export default function CashRegister() {
     const { user } = useAuth();
@@ -28,42 +26,24 @@ export default function CashRegister() {
     const [showCloseModal, setShowCloseModal] = useState(false);
     const [closeResult, setCloseResult] = useState<{ success: boolean; difference: number } | null>(null);
 
-    // Inventory State
-    const [products, setProducts] = useState<Product[]>([]);
-    const [openInventoryCount, setOpenInventoryCount] = useState<Record<string, number>>({});
-
-    const loadExpensesAndProducts = useCallback(async () => {
-        if (!shift) {
-            // Load products for opening shift
-            const prods = await getProducts();
-            setProducts(prods);
-            return;
-        }
-        const [exp, prods] = await Promise.all([
-            getShiftExpenses(shift.id),
-            getProducts()
-        ]);
+    const loadExpenses = useCallback(async () => {
+        if (!shift) return;
+        const exp = await getShiftExpenses(shift.id);
         setExpenses(exp);
-        setProducts(prods);
     }, [shift]);
 
     useEffect(() => {
-        loadExpensesAndProducts();
-    }, [loadExpensesAndProducts]);
+        loadExpenses();
+    }, [loadExpenses]);
 
     const handleOpenShift = async () => {
         if (openCashTotal < 0) return;
-        
-        // Enrich inventory data
-        const enrichedOpenInventory: Record<string, any> = {};
-        products.forEach(p => {
-            const fisico = openInventoryCount[p.id] ?? 0;
-            enrichedOpenInventory[p.id] = { fisico, sistema: p.stock, diff: fisico - p.stock, nombre: p.name };
-        });
 
-        const result = await openShift(openCashTotal, openCashCount, enrichedOpenInventory);
+        const result = await openShift(openCashTotal, openCashCount);
         if (!result.success) {
-            alert('Error al abrir turno');
+            const errObj = result.error as any;
+            const msg = errObj?.message || (result.error instanceof Error ? result.error.message : 'Error al abrir turno');
+            alert('Error al abrir turno: ' + msg);
         } else {
             setOpenCashTotal(0);
             setOpenCashCount({});
@@ -78,7 +58,7 @@ export default function CashRegister() {
             setShowExpenseModal(false);
             setExpenseAmount('');
             setExpenseReason('');
-            await loadExpensesAndProducts();
+            await loadExpenses();
         } else {
             alert('Error al registrar gasto');
         }
@@ -102,13 +82,6 @@ export default function CashRegister() {
                             setOpenCashTotal(total);
                             setOpenCashCount(counts);
                         }} />
-                    </div>
-
-                    <div style={{ textAlign: 'left', marginBottom: '20px' }}>
-                        <h3 style={{ marginBottom: '10px', color: 'var(--color-accent)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <Package size={20} /> Conteo de Inventario Inicial
-                        </h3>
-                        <InventoryCounter products={products} onChange={setOpenInventoryCount} />
                     </div>
 
                     <div style={{ marginBottom: '20px', padding: '10px', background: 'rgba(255,255,255,0.05)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', fontSize: '18px' }}>
