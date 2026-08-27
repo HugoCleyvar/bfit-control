@@ -240,7 +240,8 @@ export async function closeShiftAsAdmin(
     cashCount: CashCount,
     totalDeclared: number,
     nextFundCashCount: CashCount,
-    nextFundTotal: number
+    nextFundTotal: number,
+    inventarioCierre?: Record<string, any>
 ): Promise<{ success: boolean; difference?: number; message?: string }> {
     const { data: shift, error: fetchError } = await supabase
         .from('shifts')
@@ -257,21 +258,33 @@ export async function closeShiftAsAdmin(
 
     const difference = totalDeclared - (shift.total_efectivo || 0);
 
-    const { error } = await supabase
+    const payload: any = {
+        estatus: 'cerrado',
+        hora_cierre: new Date().toISOString(),
+        total_efectivo: totalDeclared,
+        desglose_cierre: cashCount,
+        fondo_siguiente_turno: nextFundTotal,
+        desglose_fondo_siguiente: nextFundCashCount
+    };
+
+    if (inventarioCierre && Object.keys(inventarioCierre).length > 0) {
+        payload.inventario_cierre = inventarioCierre;
+    }
+
+    let { error } = await supabase
         .from('shifts')
-        .update({
-            estatus: 'cerrado',
-            hora_cierre: new Date().toISOString(),
-            total_efectivo: totalDeclared,
-            desglose_cierre: cashCount,
-            fondo_siguiente_turno: nextFundTotal,
-            desglose_fondo_siguiente: nextFundCashCount
-        })
+        .update(payload)
         .eq('id', shiftId);
+
+    if (error && error.message && error.message.includes('inventario_cierre')) {
+        delete payload.inventario_cierre;
+        const retry = await supabase.from('shifts').update(payload).eq('id', shiftId);
+        error = retry.error;
+    }
 
     if (error) {
         console.error('Error closing shift as admin', error);
-        return { success: false, message: 'Error al cerrar el turno.' };
+        return { success: false, message: 'Error al cerrar el turno: ' + error.message };
     }
 
     return { success: true, difference };
