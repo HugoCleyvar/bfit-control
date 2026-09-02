@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { getActiveShifts, getWeeklyRevenue, getTodayIncome, closeShiftAsAdmin } from '../../logic/api/financeService';
 import { getActiveMemberCount } from '../../logic/api/memberService';
 import { getTodayAttendance, getAttendanceHeatmap } from '../../logic/api/attendanceService';
-import { getExpiringMembers, type ExpiringMember } from '../../logic/api/gamificationService';
+import { getExpiringMembers, markReminderSent, type ExpiringMember } from '../../logic/api/gamificationService';
 import { CloseShiftModal } from '../components/CloseShiftModal';
 import { Users, TrendingUp, Calendar, Clock, AlertCircle, Loader2, MessageCircle } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -176,23 +176,31 @@ function ExpiringMembersList() {
         getExpiringMembers().then(setList);
     }, []);
 
-    const openWhatsApp = (phone: string, nombre: string, fechaVencimiento: string) => {
+    const openWhatsApp = async (item: ExpiringMember) => {
+        const phone = item.profile?.telefono || '';
         // Clean phone number (remove spaces, dashes, etc.)
         const cleanPhone = phone.replace(/\D/g, '');
         // Add Mexico country code if not present
         const fullPhone = cleanPhone.startsWith('52') ? cleanPhone : `52${cleanPhone}`;
 
-        const fechaFormateada = new Date(fechaVencimiento).toLocaleDateString('es-MX', {
+        const fechaFormateada = new Date(item.fecha_vencimiento).toLocaleDateString('es-MX', {
             weekday: 'long',
             year: 'numeric',
             month: 'long',
             day: 'numeric'
         });
 
-        const message = `¡Hola ${nombre}! 👋\n\nTe escribimos de *BFIT Gym* para recordarte que tu membresía vence el *${fechaFormateada}*.\n\n¿Te gustaría renovarla para seguir entrenando con nosotros? 💪\n\nEstamos para ayudarte. ¡Saludos!`;
+        const message = `¡Hola ${item.profile?.nombre}! 👋\n\nTe escribimos de *BFIT Gym* para recordarte que tu membresía vence el *${fechaFormateada}*.\n\n¿Te gustaría renovarla para seguir entrenando con nosotros? 💪\n\nEstamos para ayudarte. ¡Saludos!`;
 
         const encodedMessage = encodeURIComponent(message);
         window.open(`https://wa.me/${fullPhone}?text=${encodedMessage}`, '_blank');
+
+        // Don't nag again for this same due date - hide it from the list until it's paid
+        // (registerPayment resets this flag) or the window passes.
+        const ok = await markReminderSent(item.id);
+        if (ok) {
+            setList((prev) => prev.filter((m) => m.id !== item.id));
+        }
     };
 
     if (list.length === 0) return (
@@ -227,11 +235,7 @@ function ExpiringMembersList() {
                         <div style={{ fontSize: '10px', textTransform: 'uppercase' }}>Días</div>
                     </div>
                     <button
-                        onClick={() => openWhatsApp(
-                            item.profile?.telefono || '',
-                            item.profile?.nombre || '',
-                            item.fecha_vencimiento
-                        )}
+                        onClick={() => openWhatsApp(item)}
                         disabled={!item.profile?.telefono}
                         style={{
                             backgroundColor: '#25D366',
