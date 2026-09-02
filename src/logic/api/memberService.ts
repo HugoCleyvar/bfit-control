@@ -261,7 +261,9 @@ export async function updateSubscriptionExpiration(memberId: string, newDate: st
         .from('subscriptions')
         .update({
             fecha_vencimiento: cleanDateStr,
-            estatus: isFutureOrToday ? 'activa' : 'vencida'
+            estatus: isFutureOrToday ? 'activa' : 'vencida',
+            recordatorio_enviado: false,
+            recordatorio_enviado_at: null
         })
         .eq('id', targetSub.id);
 

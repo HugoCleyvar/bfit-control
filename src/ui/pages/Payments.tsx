@@ -2,12 +2,39 @@ import { useState, useEffect, useCallback } from 'react';
 import { getPayments, registerPayment, deletePaymentAdmin, getActiveShifts, type PaymentWithDetails } from '../../logic/api/financeService';
 import { getPlans, type Plan } from '../../logic/api/planService';
 import { getProducts, processSaleDeduction, type Product } from '../../logic/api/productService';
+import type { MemberWithStatus } from '../../logic/api/memberService';
 import { useAuth } from '../../logic/authContext';
 import { useShift } from '../../logic/shiftContext';
 import { DataTable } from '../components/DataTable';
 import type { Column } from '../components/DataTable';
 import { MemberSearch } from '../components/MemberSearch';
 import { CreditCard, Banknote, DollarSign, PlusCircle, MessageCircle, Trash2 } from 'lucide-react';
+
+// Shared by the auto-send-on-payment flow and the historial "WA" button, so the receipt text
+// only lives in one place.
+function buildReceiptLink(phone: string | undefined, nombre: string, planNombre: string, planDuracionDias: number, total: number, fechaPago: string): string {
+    const cleanPhone = phone?.replace(/\D/g, '') || '';
+    if (!cleanPhone) return '';
+
+    const paymentDate = new Date(fechaPago).toLocaleDateString('es-MX');
+    const expirationDate = new Date(
+        new Date(fechaPago).getTime() + (planDuracionDias * 24 * 60 * 60 * 1000)
+    ).toLocaleDateString('es-MX');
+
+    const message = `🏋️ *BFIT GYM - COMPROBANTE DE PAGO*
+
+¡Hola ${nombre}! Tu pago ha sido registrado exitosamente.
+
+📋 *Detalles:*
+• Plan: ${planNombre}
+• Monto: $${total.toFixed(2)}
+• Fecha: ${paymentDate}
+• Vigencia hasta: ${expirationDate}
+
+¡Gracias por tu preferencia! 💪`;
+
+    return `https://wa.me/52${cleanPhone}?text=${encodeURIComponent(message)}`;
+}
 
 
 export default function PaymentsPage() {
@@ -25,6 +52,7 @@ export default function PaymentsPage() {
 
     // Membership specific
     const [selectedMemberId, setSelectedMemberId] = useState('');
+    const [selectedMember, setSelectedMember] = useState<MemberWithStatus | null>(null);
     const [selectedPlanId, setSelectedPlanId] = useState('');
 
     // Data
@@ -115,6 +143,16 @@ export default function PaymentsPage() {
             });
 
             if (result.success) {
+                // Auto-open the WhatsApp receipt right at the moment of sale, before the blocking
+                // alert() below - one tap for the admin instead of hunting the row in Historial.
+                if (mode === 'membership' && selectedMember?.telefono) {
+                    const plan = plans.find(p => p.id === selectedPlanId);
+                    if (plan) {
+                        const link = buildReceiptLink(selectedMember.telefono, selectedMember.nombre, plan.nombre, plan.duracion_dias, total, new Date().toISOString());
+                        if (link) window.open(link, '_blank');
+                    }
+                }
+
                 if (result.message) {
                     alert('ATENCIÓN: ' + result.message);
                 } else {
@@ -124,6 +162,7 @@ export default function PaymentsPage() {
                 setAmount('');
                 setConcept('');
                 setSelectedMemberId('');
+                setSelectedMember(null);
                 setSelectedPlanId('');
                 setSelectedProductId('');
                 loadInitialData();
@@ -166,28 +205,7 @@ export default function PaymentsPage() {
     // Helper function to generate WhatsApp receipt message
     const generateWhatsAppReceipt = (payment: PaymentWithDetails) => {
         if (!payment.member || !payment.plan) return '';
-
-        const phone = payment.member.telefono?.replace(/\D/g, '') || '';
-        if (!phone) return '';
-
-        const paymentDate = new Date(payment.fecha_pago).toLocaleDateString('es-MX');
-        const expirationDate = new Date(
-            new Date(payment.fecha_pago).getTime() + (payment.plan.duracion_dias * 24 * 60 * 60 * 1000)
-        ).toLocaleDateString('es-MX');
-
-        const message = `🏋️ *BFIT GYM - COMPROBANTE DE PAGO*
-
-¡Hola ${payment.member.nombre}! Tu pago ha sido registrado exitosamente.
-
-📋 *Detalles:*
-• Plan: ${payment.plan.nombre}
-• Monto: $${payment.total.toFixed(2)}
-• Fecha: ${paymentDate}
-• Vigencia hasta: ${expirationDate}
-
-¡Gracias por tu preferencia! 💪`;
-
-        return `https://wa.me/52${phone}?text=${encodeURIComponent(message)}`;
+        return buildReceiptLink(payment.member.telefono, payment.member.nombre, payment.plan.nombre, payment.plan.duracion_dias, payment.total, payment.fecha_pago);
     };
 
     const columns: Column<PaymentWithDetails>[] = [
@@ -344,7 +362,10 @@ export default function PaymentsPage() {
                                 <div>
                                     <label style={{ display: 'block', marginBottom: '8px', fontSize: 'var(--font-size-sm)' }}>Usuario</label>
                                     <MemberSearch
-                                        onSelect={(id) => setSelectedMemberId(id)}
+                                        onSelect={(id, member) => {
+                                            setSelectedMemberId(id);
+                                            setSelectedMember(member ?? null);
+                                        }}
                                     />
                                 </div>
 
