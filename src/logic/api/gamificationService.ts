@@ -36,9 +36,10 @@ export async function getExpiringMembers(daysThreshold = 5): Promise<ExpiringMem
             fecha_vencimiento,
             plan_id,
             profiles:usuario_id (nombre, apellido, telefono, foto_url),
-            plans:plan_id (nombre)
+            plans:plan_id (nombre, duracion_dias)
         `)
         .eq('estatus', 'activa')
+        .eq('recordatorio_enviado', false)
         .gte('fecha_vencimiento', todayStart.toISOString())
         .lte('fecha_vencimiento', futureEnd.toISOString())
         .order('fecha_vencimiento', { ascending: true });
@@ -53,7 +54,7 @@ export async function getExpiringMembers(daysThreshold = 5): Promise<ExpiringMem
         usuario_id: string;
         fecha_vencimiento: string;
         profiles: { nombre: string; apellido: string; telefono: string; foto_url?: string }[] | { nombre: string; apellido: string; telefono: string; foto_url?: string };
-        plans: { nombre: string }[] | { nombre: string };
+        plans: { nombre: string; duracion_dias: number }[] | { nombre: string; duracion_dias: number };
     }
 
     return (data as unknown as SubscriptionRow[]).map((sub) => {
@@ -75,11 +76,27 @@ export async function getExpiringMembers(daysThreshold = 5): Promise<ExpiringMem
         };
     }).filter((m) => {
         if (!m.profile) return false;
-        // Visita/paquete plans get a subscriptions row too (see registerPayment), but members
-        // on them access by ticket count, not by this date - it's not a renewal to chase.
-        const planName = m.plan?.nombre?.toLowerCase() || '';
-        return !planName.includes('visita') && !planName.includes('paquete');
-    });
+        // Only chase renewals for Quincena (15 días) and Mensualidad (30 días) - Visita,
+        // Semana and Paquete plans access by ticket/short pass, not a recurring due date.
+        const duracionDias = m.plan?.duracion_dias;
+        return duracionDias === 15 || duracionDias === 30;
+    }).map(({ plan, ...rest }) => ({ ...rest, plan: { nombre: plan?.nombre || '' } }));
+}
+
+// Marks a subscription's due-date reminder as already sent for its current cycle, so
+// getExpiringMembers stops resurfacing it every day until the member renews (registerPayment /
+// updateSubscriptionExpiration reset this flag whenever fecha_vencimiento moves forward).
+export async function markReminderSent(subscriptionId: string): Promise<boolean> {
+    const { error } = await supabase
+        .from('subscriptions')
+        .update({ recordatorio_enviado: true, recordatorio_enviado_at: new Date().toISOString() })
+        .eq('id', subscriptionId);
+
+    if (error) {
+        console.error('Error marking reminder as sent:', error);
+        return false;
+    }
+    return true;
 }
 
 export async function getMemberStats(userId: string): Promise<{ totalVisits: number; thisMonth: number; streak: number }> {
