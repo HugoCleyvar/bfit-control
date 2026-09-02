@@ -410,7 +410,9 @@ export async function registerPayment(payment: Omit<Payment, 'id'> & { force?: b
                     const { error: subError } = await supabase.from('subscriptions').update({
                         fecha_vencimiento: formatLocalDateToYMD(newEnd),
                         estatus: 'activa',
-                        plan_id: payment.plan_id
+                        plan_id: payment.plan_id,
+                        recordatorio_enviado: false,
+                        recordatorio_enviado_at: null
                     }).eq('id', activeSub.id);
 
                     if (subError) throw subError;
