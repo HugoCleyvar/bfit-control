@@ -112,22 +112,33 @@ export function FaceCapture({ hasExistingFace, onCapture }: FaceCaptureProps) {
                         </p>
                     )}
 
+                    {/* Always mounted (just hidden via CSS) so the ref is already attached to a
+                        real DOM node by the time startCamera() tries to assign srcObject to it -
+                        mounting it only once status flips to 'ready' left it permanently blank. */}
+                    <video
+                        ref={videoRef}
+                        muted
+                        playsInline
+                        style={{
+                            width: '100%', maxWidth: '280px', borderRadius: '8px',
+                            display: (status === 'ready' || status === 'detecting') ? 'block' : 'none',
+                            margin: '0 auto 10px', transform: 'scaleX(-1)'
+                        }}
+                    />
+
                     {(status === 'ready' || status === 'detecting') && (
-                        <div>
-                            <video ref={videoRef} muted playsInline style={{ width: '100%', maxWidth: '280px', borderRadius: '8px', display: 'block', margin: '0 auto 10px', transform: 'scaleX(-1)' }} />
-                            <button
-                                type="button"
-                                onClick={handleCapture}
-                                disabled={status === 'detecting'}
-                                style={{
-                                    width: '100%', padding: '10px', borderRadius: '6px', border: 'none',
-                                    background: 'var(--color-primary)', color: 'white', cursor: 'pointer',
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'
-                                }}
-                            >
-                                <ScanFace size={16} /> {status === 'detecting' ? 'Analizando...' : 'Capturar Rostro'}
-                            </button>
-                        </div>
+                        <button
+                            type="button"
+                            onClick={handleCapture}
+                            disabled={status === 'detecting'}
+                            style={{
+                                width: '100%', padding: '10px', borderRadius: '6px', border: 'none',
+                                background: 'var(--color-primary)', color: 'white', cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'
+                            }}
+                        >
+                            <ScanFace size={16} /> {status === 'detecting' ? 'Analizando...' : 'Capturar Rostro'}
+                        </button>
                     )}
 
                     {errorMsg && (
