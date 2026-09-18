@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
+import { NotificationToastStack } from '../components/NotificationToastStack';
 import { Bell, Search, Menu } from 'lucide-react';
 import './Layout.css';
 
@@ -57,6 +58,7 @@ export function MainLayout() {
             />
 
             <Sidebar isOpen={sidebarOpen} onClose={closeSidebar} />
+            <NotificationToastStack />
 
             <div className="content-wrapper">
                 <Topbar onMenuToggle={toggleSidebar} />

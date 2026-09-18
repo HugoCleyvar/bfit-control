@@ -1,12 +1,22 @@
 import { supabase, fetchAllRows } from './supabase';
 import type { Attendance } from '../../domain/types';
-import { findMemberForCheckIn } from './memberService';
+import { findMemberForCheckIn, type MemberWithStatus } from './memberService';
 import { startOfLocalDay } from '../../domain/dateUtils';
 
 export interface CheckInResult {
     success: boolean;
     message: string;
-    member?: { nombre: string; foto_url?: string };
+    member?: {
+        nombre: string;
+        apellido?: string;
+        foto_url?: string;
+        subscriptionStatus?: MemberWithStatus['subscriptionStatus'];
+        daysRemaining?: number;
+        subscriptionEndDate?: string;
+        currentPlanName?: string;
+        isPackPlan?: boolean;
+        visitasDisponibles?: number;
+    };
 }
 
 export async function getTodayAttendance(): Promise<Attendance[]> {
@@ -132,11 +142,23 @@ export async function registerCheckIn(memberIdOrName: string, colaboradorId?: st
         return { success: false, message: 'Error al registrar asistencia' };
     }
 
+    const memberInfo: CheckInResult['member'] = {
+        nombre: member.nombre,
+        apellido: member.apellido,
+        foto_url: member.foto_url,
+        subscriptionStatus: member.subscriptionStatus,
+        daysRemaining: member.daysRemaining,
+        subscriptionEndDate: member.subscriptionEndDate,
+        currentPlanName: member.currentPlanName,
+        isPackPlan,
+        visitasDisponibles: member.visitas_disponibles
+    };
+
     if (canAccess) {
         return {
             success: true,
             message: message,
-            member: { nombre: member.nombre, foto_url: member.foto_url }
+            member: memberInfo
         };
     } else {
         let reason = 'Acceso Denegado';
@@ -152,7 +174,7 @@ export async function registerCheckIn(memberIdOrName: string, colaboradorId?: st
         return {
             success: false,
             message: reason,
-            member: { nombre: member.nombre, foto_url: member.foto_url }
+            member: memberInfo
         };
     }
 }

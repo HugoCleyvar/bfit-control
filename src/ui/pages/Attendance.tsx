@@ -9,11 +9,15 @@ import type { Column } from '../components/DataTable';
 // Removed unused getMembers import
 import { MemberSearch } from '../components/MemberSearch';
 import { FaceCheckIn } from '../components/FaceCheckIn';
+import { CheckInResultCard } from '../components/CheckInResultCard';
 import { Search, XCircle, CheckCircle, ScanFace, Keyboard } from 'lucide-react';
 
 export default function AttendancePage() {
     const [query, setQuery] = useState('');
     const [checkInResult, setCheckInResult] = useState<CheckInResult | null>(null);
+    // Bumped alongside checkInResult so the result card can key off it and replay its
+    // entrance animation on every new check-in, even back-to-back ones with the same message.
+    const [resultKey, setResultKey] = useState(0);
     const [attendanceList, setAttendanceList] = useState<Attendance[]>([]);
     const [loading, setLoading] = useState(false);
     const [mode, setMode] = useState<'manual' | 'facial'>('manual');
@@ -57,6 +61,7 @@ export default function AttendancePage() {
         );
 
         setCheckInResult(result);
+        setResultKey(k => k + 1);
         setLoading(false);
         setQuery(''); // Clear manual input
 
@@ -152,23 +157,7 @@ export default function AttendancePage() {
                         </>
                     )}
 
-                    {checkInResult && (
-                        <div style={{
-                            marginTop: 'var(--spacing-lg)',
-                            padding: 'var(--spacing-lg)',
-                            borderRadius: 'var(--radius-md)',
-                            backgroundColor: checkInResult.success ? 'rgba(0, 204, 102, 0.1)' : 'rgba(255, 77, 77, 0.1)',
-                            border: `1px solid ${checkInResult.success ? 'var(--color-success)' : 'var(--color-danger)'}`,
-                            textAlign: 'center'
-                        }}>
-                            <div style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'bold', color: checkInResult.success ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                                {checkInResult.success ? 'ACCESO CONCEDIDO' : 'ACCESO DENEGADO'}
-                            </div>
-                            <div style={{ marginTop: 'var(--spacing-sm)', fontSize: 'var(--font-size-lg)' }}>
-                                {checkInResult.message}
-                            </div>
-                        </div>
-                    )}
+                    {checkInResult && <CheckInResultCard key={resultKey} result={checkInResult} />}
                 </div>
 
                 {/* Recent Attendance */}
