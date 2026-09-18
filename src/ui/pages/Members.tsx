@@ -20,6 +20,9 @@ interface MemberFormData {
     fecha_nacimiento?: string;
     foto_url: string;
     fecha_vencimiento?: string;
+    descriptor_facial?: number[] | null;
+    consentimiento_facial?: boolean;
+    descriptor_facial_actualizado?: string;
 }
 
 function Scorecard({ userId }: { userId: string }) {

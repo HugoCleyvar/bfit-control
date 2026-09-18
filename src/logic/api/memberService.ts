@@ -161,7 +161,10 @@ export function mapMembersWithStatus(data: MemberWithSubscriptions[]): MemberWit
             currentPlanName: targetSub?.plan?.nombre,
             subscriptionEndDate: targetSub?.fecha_vencimiento,
             visitas_disponibles: member.visitas_disponibles,
-            ultima_visita: member.ultima_visita
+            ultima_visita: member.ultima_visita,
+            descriptor_facial: member.descriptor_facial,
+            consentimiento_facial: member.consentimiento_facial,
+            descriptor_facial_actualizado: member.descriptor_facial_actualizado
         };
     });
 }

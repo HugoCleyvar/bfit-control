@@ -8,13 +8,15 @@ import { DataTable } from '../components/DataTable';
 import type { Column } from '../components/DataTable';
 // Removed unused getMembers import
 import { MemberSearch } from '../components/MemberSearch';
-import { Search, XCircle, CheckCircle } from 'lucide-react';
+import { FaceCheckIn } from '../components/FaceCheckIn';
+import { Search, XCircle, CheckCircle, ScanFace, Keyboard } from 'lucide-react';
 
 export default function AttendancePage() {
     const [query, setQuery] = useState('');
     const [checkInResult, setCheckInResult] = useState<CheckInResult | null>(null);
     const [attendanceList, setAttendanceList] = useState<Attendance[]>([]);
     const [loading, setLoading] = useState(false);
+    const [mode, setMode] = useState<'manual' | 'facial'>('manual');
 
     const loadData = useCallback(async () => {
         // Load in parallel
@@ -87,35 +89,68 @@ export default function AttendancePage() {
                 <div style={{ backgroundColor: 'var(--color-card)', padding: 'var(--spacing-xl)', borderRadius: 'var(--radius-lg)' }}>
                     <h3 style={{ marginBottom: 'var(--spacing-md)' }}>Registrar Entrada</h3>
 
-                    <div style={{ marginBottom: 'var(--spacing-md)' }}>
-                        <label style={{ display: 'block', marginBottom: '8px', fontSize: 'var(--font-size-sm)' }}>Buscar por Nombre</label>
-                        <MemberSearch
-                            placeholder="Escribe el nombre del miembro..."
-                            onSelect={(id) => handleCheckIn(undefined, id)}
-                        />
+                    <div style={{ display: 'flex', gap: '10px', marginBottom: 'var(--spacing-md)' }}>
+                        <button
+                            type="button"
+                            onClick={() => setMode('manual')}
+                            style={{
+                                flex: 1, padding: '8px', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                backgroundColor: mode === 'manual' ? 'var(--color-primary)' : 'var(--color-bg)',
+                                color: mode === 'manual' ? 'white' : 'var(--color-text-secondary)',
+                                border: '1px solid var(--color-border)'
+                            }}
+                        >
+                            <Keyboard size={16} /> Búsqueda Manual
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setMode('facial')}
+                            style={{
+                                flex: 1, padding: '8px', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                backgroundColor: mode === 'facial' ? 'var(--color-primary)' : 'var(--color-bg)',
+                                color: mode === 'facial' ? 'white' : 'var(--color-text-secondary)',
+                                border: '1px solid var(--color-border)'
+                            }}
+                        >
+                            <ScanFace size={16} /> Reconocimiento Facial
+                        </button>
                     </div>
 
-                    <div style={{ position: 'relative', textAlign: 'center', margin: '10px 0', opacity: 0.5 }}>- O -</div>
+                    {mode === 'facial' ? (
+                        <FaceCheckIn onMatch={(id) => handleCheckIn(undefined, id)} paused={loading} />
+                    ) : (
+                        <>
+                            <div style={{ marginBottom: 'var(--spacing-md)' }}>
+                                <label style={{ display: 'block', marginBottom: '8px', fontSize: 'var(--font-size-sm)' }}>Buscar por Nombre</label>
+                                <MemberSearch
+                                    placeholder="Escribe el nombre del miembro..."
+                                    onSelect={(id) => handleCheckIn(undefined, id)}
+                                />
+                            </div>
 
-                    <form onSubmit={(e) => handleCheckIn(e)} style={{ display: 'flex', gap: 'var(--spacing-md)' }}>
-                        <div style={{ position: 'relative', flex: 1 }}>
-                            <Search size={18} style={{ position: 'absolute', left: '12px', top: '12px', color: 'var(--color-text-secondary)' }} />
-                            <input
-                                type="text"
-                                value={query}
-                                onChange={(e) => setQuery(e.target.value)}
-                                placeholder="ID Manual..."
-                                style={{
-                                    width: '100%', padding: '10px 10px 10px 36px',
-                                    borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)',
-                                    backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)'
-                                }}
-                            />
-                        </div>
-                        <button type="submit" disabled={loading} style={{ padding: '0 15px' }}>
-                            ID
-                        </button>
-                    </form>
+                            <div style={{ position: 'relative', textAlign: 'center', margin: '10px 0', opacity: 0.5 }}>- O -</div>
+
+                            <form onSubmit={(e) => handleCheckIn(e)} style={{ display: 'flex', gap: 'var(--spacing-md)' }}>
+                                <div style={{ position: 'relative', flex: 1 }}>
+                                    <Search size={18} style={{ position: 'absolute', left: '12px', top: '12px', color: 'var(--color-text-secondary)' }} />
+                                    <input
+                                        type="text"
+                                        value={query}
+                                        onChange={(e) => setQuery(e.target.value)}
+                                        placeholder="ID Manual..."
+                                        style={{
+                                            width: '100%', padding: '10px 10px 10px 36px',
+                                            borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)',
+                                            backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)'
+                                        }}
+                                    />
+                                </div>
+                                <button type="submit" disabled={loading} style={{ padding: '0 15px' }}>
+                                    ID
+                                </button>
+                            </form>
+                        </>
+                    )}
 
                     {checkInResult && (
                         <div style={{
