@@ -35,6 +35,51 @@ export async function getFaceDescriptorFromVideo(video: HTMLVideoElement): Promi
     return result?.descriptor ?? null;
 }
 
+// Lightweight - just the face box, no landmarks/descriptor. Cheap enough to poll on every
+// tick of a live positioning guide, unlike getFaceDescriptorFromVideo's full pipeline.
+export async function detectFaceBox(video: HTMLVideoElement) {
+    return faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions());
+}
+
+export interface FacePositionResult {
+    status: 'none' | 'too-small' | 'too-large' | 'off-center' | 'good';
+    hint: string;
+}
+
+// A face that's too small/large/off-center in the frame tends to produce a worse-quality
+// descriptor (see MATCH_THRESHOLD comment - a bad enrollment capture is what caused the
+// first real false-match report). These ratios are estimates, not measured - tune them if
+// the guide keeps rejecting reasonable framing or accepting bad framing.
+const MIN_FACE_WIDTH_RATIO = 0.32;
+const MAX_FACE_WIDTH_RATIO = 0.68;
+const MAX_CENTER_OFFSET_RATIO = 0.18;
+
+export function evaluateFacePosition(
+    detection: { box: { x: number; y: number; width: number; height: number } } | undefined,
+    videoWidth: number,
+    videoHeight: number
+): FacePositionResult {
+    if (!detection || !videoWidth || !videoHeight) {
+        return { status: 'none', hint: 'Coloca tu rostro dentro del círculo' };
+    }
+
+    const { box } = detection;
+    const widthRatio = box.width / videoWidth;
+    const centerOffsetX = Math.abs((box.x + box.width / 2) / videoWidth - 0.5);
+    const centerOffsetY = Math.abs((box.y + box.height / 2) / videoHeight - 0.5);
+
+    if (widthRatio < MIN_FACE_WIDTH_RATIO) {
+        return { status: 'too-small', hint: 'Acércate un poco más' };
+    }
+    if (widthRatio > MAX_FACE_WIDTH_RATIO) {
+        return { status: 'too-large', hint: 'Aléjate un poco' };
+    }
+    if (centerOffsetX > MAX_CENTER_OFFSET_RATIO || centerOffsetY > MAX_CENTER_OFFSET_RATIO) {
+        return { status: 'off-center', hint: 'Céntrate en el círculo' };
+    }
+    return { status: 'good', hint: '¡Buena posición! Puedes capturar' };
+}
+
 export interface EnrolledFace {
     id: string;
     nombre: string;
