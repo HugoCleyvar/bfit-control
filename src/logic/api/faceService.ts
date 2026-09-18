@@ -18,6 +18,7 @@ export function ensureModelsLoaded(): Promise<void> {
         modelsLoadedPromise = Promise.all([
             faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
             faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+            faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL),
             faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
         ]).then(() => undefined);
     }
@@ -41,11 +42,12 @@ export async function detectFaceBox(video: HTMLVideoElement) {
     return faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions());
 }
 
-// Landmarks without the recognition descriptor - cheaper than getFaceDescriptorFromVideo,
-// used to track eye state during liveness verification once we already know who we're
-// checking (see eyeAspectRatio below).
+// Landmarks without the recognition descriptor, using the tiny landmark net - cheaper than
+// getFaceDescriptorFromVideo's full pipeline. Used to track eye state during liveness
+// verification (see eyeAspectRatio below) once we already know who we're checking, where
+// polling many frames quickly matters more than landmark precision.
 export async function detectFaceLandmarks(video: HTMLVideoElement) {
-    return faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks();
+    return faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks(true);
 }
 
 // Eye Aspect Ratio (Soukupova & Cech, 2016): stays roughly constant (~0.25-0.35) while an
