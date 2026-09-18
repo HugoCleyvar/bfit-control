@@ -64,9 +64,10 @@ export async function logout(): Promise<void> {
 }
 
 import { createClient } from '@supabase/supabase-js';
+import type { UserRole } from '../../domain/types';
 
 // Admin helper to create users without logging out the admin
-export async function createCollaborator(email: string, password: string, nombre: string): Promise<{ success: boolean; error?: string }> {
+export async function createStaffUser(email: string, password: string, nombre: string, rol: UserRole): Promise<{ success: boolean; error?: string }> {
     const soupUrl = import.meta.env.VITE_SUPABASE_URL;
     const soupKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
@@ -87,8 +88,8 @@ export async function createCollaborator(email: string, password: string, nombre
         options: {
             data: {
                 nombre: nombre,
-                role: 'colaborador',
-                rol: 'colaborador'
+                role: rol,
+                rol: rol
             }
         }
     });
@@ -102,8 +103,8 @@ export async function createCollaborator(email: string, password: string, nombre
         id: data.user.id,
         email: email,
         nombre: nombre,
-        rol: 'colaborador',
-        role: 'colaborador',
+        rol: rol,
+        role: rol,
         activo: true,
         is_active: true
     });
@@ -116,6 +117,6 @@ export async function createCollaborator(email: string, password: string, nombre
         }
     }
 
-    console.log('Collaborator created successfully:', email);
+    console.log('Staff user created successfully:', email, rol);
     return { success: true };
 }

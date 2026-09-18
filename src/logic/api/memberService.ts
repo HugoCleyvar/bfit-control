@@ -161,9 +161,26 @@ export function mapMembersWithStatus(data: MemberWithSubscriptions[]): MemberWit
             currentPlanName: targetSub?.plan?.nombre,
             subscriptionEndDate: targetSub?.fecha_vencimiento,
             visitas_disponibles: member.visitas_disponibles,
-            ultima_visita: member.ultima_visita
+            ultima_visita: member.ultima_visita,
+            descriptor_facial: member.descriptor_facial,
+            consentimiento_facial: member.consentimiento_facial,
+            descriptor_facial_actualizado: member.descriptor_facial_actualizado
         };
     });
+}
+
+// Lean lookup for a single member's current standing - used by the cross-device attendance
+// notifications, which only get a bare usuario_id from the realtime payload and need just
+// enough to show a name + vigente/vencido/por-vencer badge, not the full roster shape.
+export async function getMemberStatusById(id: string): Promise<MemberWithStatus | null> {
+    const { data, error } = await supabase
+        .from('members')
+        .select(`*, subscriptions (*, plan:plans(nombre))`)
+        .eq('id', id)
+        .maybeSingle();
+
+    if (error || !data) return null;
+    return mapMembersWithStatus([data])[0] ?? null;
 }
 
 export async function deleteMember(id: string): Promise<boolean> {

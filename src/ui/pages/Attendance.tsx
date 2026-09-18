@@ -8,13 +8,19 @@ import { DataTable } from '../components/DataTable';
 import type { Column } from '../components/DataTable';
 // Removed unused getMembers import
 import { MemberSearch } from '../components/MemberSearch';
-import { Search, XCircle, CheckCircle } from 'lucide-react';
+import { FaceCheckIn } from '../components/FaceCheckIn';
+import { CheckInResultCard } from '../components/CheckInResultCard';
+import { Search, XCircle, CheckCircle, ScanFace, Keyboard } from 'lucide-react';
 
 export default function AttendancePage() {
     const [query, setQuery] = useState('');
     const [checkInResult, setCheckInResult] = useState<CheckInResult | null>(null);
+    // Bumped alongside checkInResult so the result card can key off it and replay its
+    // entrance animation on every new check-in, even back-to-back ones with the same message.
+    const [resultKey, setResultKey] = useState(0);
     const [attendanceList, setAttendanceList] = useState<Attendance[]>([]);
     const [loading, setLoading] = useState(false);
+    const [mode, setMode] = useState<'manual' | 'facial'>('manual');
 
     const loadData = useCallback(async () => {
         // Load in parallel
@@ -37,7 +43,7 @@ export default function AttendancePage() {
 
         // Security Check
         if (!isAdmin && !currentShift) {
-            alert('Debes abrir un turno para registrar asistencias.');
+            alert('Debes tener un turno abierto (ábrelo o únete a uno en Turnos y Caja) para registrar asistencias.');
             return;
         }
 
@@ -55,6 +61,7 @@ export default function AttendancePage() {
         );
 
         setCheckInResult(result);
+        setResultKey(k => k + 1);
         setLoading(false);
         setQuery(''); // Clear manual input
 
@@ -87,53 +94,70 @@ export default function AttendancePage() {
                 <div style={{ backgroundColor: 'var(--color-card)', padding: 'var(--spacing-xl)', borderRadius: 'var(--radius-lg)' }}>
                     <h3 style={{ marginBottom: 'var(--spacing-md)' }}>Registrar Entrada</h3>
 
-                    <div style={{ marginBottom: 'var(--spacing-md)' }}>
-                        <label style={{ display: 'block', marginBottom: '8px', fontSize: 'var(--font-size-sm)' }}>Buscar por Nombre</label>
-                        <MemberSearch
-                            placeholder="Escribe el nombre del miembro..."
-                            onSelect={(id) => handleCheckIn(undefined, id)}
-                        />
+                    <div style={{ display: 'flex', gap: '10px', marginBottom: 'var(--spacing-md)' }}>
+                        <button
+                            type="button"
+                            onClick={() => setMode('manual')}
+                            style={{
+                                flex: 1, padding: '8px', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                backgroundColor: mode === 'manual' ? 'var(--color-primary)' : 'var(--color-bg)',
+                                color: mode === 'manual' ? 'white' : 'var(--color-text-secondary)',
+                                border: '1px solid var(--color-border)'
+                            }}
+                        >
+                            <Keyboard size={16} /> Búsqueda Manual
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setMode('facial')}
+                            style={{
+                                flex: 1, padding: '8px', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                backgroundColor: mode === 'facial' ? 'var(--color-primary)' : 'var(--color-bg)',
+                                color: mode === 'facial' ? 'white' : 'var(--color-text-secondary)',
+                                border: '1px solid var(--color-border)'
+                            }}
+                        >
+                            <ScanFace size={16} /> Reconocimiento Facial
+                        </button>
                     </div>
 
-                    <div style={{ position: 'relative', textAlign: 'center', margin: '10px 0', opacity: 0.5 }}>- O -</div>
-
-                    <form onSubmit={(e) => handleCheckIn(e)} style={{ display: 'flex', gap: 'var(--spacing-md)' }}>
-                        <div style={{ position: 'relative', flex: 1 }}>
-                            <Search size={18} style={{ position: 'absolute', left: '12px', top: '12px', color: 'var(--color-text-secondary)' }} />
-                            <input
-                                type="text"
-                                value={query}
-                                onChange={(e) => setQuery(e.target.value)}
-                                placeholder="ID Manual..."
-                                style={{
-                                    width: '100%', padding: '10px 10px 10px 36px',
-                                    borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)',
-                                    backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)'
-                                }}
-                            />
-                        </div>
-                        <button type="submit" disabled={loading} style={{ padding: '0 15px' }}>
-                            ID
-                        </button>
-                    </form>
-
-                    {checkInResult && (
-                        <div style={{
-                            marginTop: 'var(--spacing-lg)',
-                            padding: 'var(--spacing-lg)',
-                            borderRadius: 'var(--radius-md)',
-                            backgroundColor: checkInResult.success ? 'rgba(0, 204, 102, 0.1)' : 'rgba(255, 77, 77, 0.1)',
-                            border: `1px solid ${checkInResult.success ? 'var(--color-success)' : 'var(--color-danger)'}`,
-                            textAlign: 'center'
-                        }}>
-                            <div style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'bold', color: checkInResult.success ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                                {checkInResult.success ? 'ACCESO CONCEDIDO' : 'ACCESO DENEGADO'}
+                    {mode === 'facial' ? (
+                        <FaceCheckIn onMatch={(id) => handleCheckIn(undefined, id)} paused={loading} />
+                    ) : (
+                        <>
+                            <div style={{ marginBottom: 'var(--spacing-md)' }}>
+                                <label style={{ display: 'block', marginBottom: '8px', fontSize: 'var(--font-size-sm)' }}>Buscar por Nombre</label>
+                                <MemberSearch
+                                    placeholder="Escribe el nombre del miembro..."
+                                    onSelect={(id) => handleCheckIn(undefined, id)}
+                                />
                             </div>
-                            <div style={{ marginTop: 'var(--spacing-sm)', fontSize: 'var(--font-size-lg)' }}>
-                                {checkInResult.message}
-                            </div>
-                        </div>
+
+                            <div style={{ position: 'relative', textAlign: 'center', margin: '10px 0', opacity: 0.5 }}>- O -</div>
+
+                            <form onSubmit={(e) => handleCheckIn(e)} style={{ display: 'flex', gap: 'var(--spacing-md)' }}>
+                                <div style={{ position: 'relative', flex: 1 }}>
+                                    <Search size={18} style={{ position: 'absolute', left: '12px', top: '12px', color: 'var(--color-text-secondary)' }} />
+                                    <input
+                                        type="text"
+                                        value={query}
+                                        onChange={(e) => setQuery(e.target.value)}
+                                        placeholder="ID Manual..."
+                                        style={{
+                                            width: '100%', padding: '10px 10px 10px 36px',
+                                            borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)',
+                                            backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)'
+                                        }}
+                                    />
+                                </div>
+                                <button type="submit" disabled={loading} style={{ padding: '0 15px' }}>
+                                    ID
+                                </button>
+                            </form>
+                        </>
                     )}
+
+                    {checkInResult && <CheckInResultCard key={resultKey} result={checkInResult} />}
                 </div>
 
                 {/* Recent Attendance */}

@@ -103,7 +103,7 @@ export default function PaymentsPage() {
         if (!user) return;
 
         if (!isAdmin && !currentShift) {
-            alert('Debes abrir un turno para registrar pagos.');
+            alert('Debes tener un turno abierto (ábrelo o únete a uno en Turnos y Caja) para registrar pagos.');
             return;
         }
 
