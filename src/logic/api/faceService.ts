@@ -5,7 +5,9 @@ const MODEL_URL = '/models';
 
 // face-api.js's usual "same person" cutoff is ~0.6. This gates gym access, so we use a
 // stricter value to favor false rejects (falls back to manual search) over false accepts.
-export const MATCH_THRESHOLD = 0.5;
+// Tightened after real-world testing showed 0.5 could match two different people - tune
+// this further using the distance shown live in FaceCheckIn once more test data comes in.
+export const MATCH_THRESHOLD = 0.4;
 
 let modelsLoadedPromise: Promise<void> | null = null;
 
@@ -68,11 +70,19 @@ export interface FaceMatch {
 
 // Closest enrolled face under the threshold, or null if nobody matches closely enough.
 export function findBestMatch(descriptor: Float32Array, candidates: EnrolledFace[], threshold = MATCH_THRESHOLD): FaceMatch | null {
+    const closest = closestMatch(descriptor, candidates);
+    return closest && closest.distance <= threshold ? closest : null;
+}
+
+// Closest enrolled face regardless of threshold - lets the UI show real distance numbers
+// (including near-misses) so MATCH_THRESHOLD can be calibrated from real data instead of
+// guessed blind.
+export function closestMatch(descriptor: Float32Array, candidates: EnrolledFace[]): FaceMatch | null {
     let best: FaceMatch | null = null;
 
     for (const candidate of candidates) {
         const distance = faceapi.euclideanDistance(descriptor, candidate.descriptor);
-        if (distance <= threshold && (!best || distance < best.distance)) {
+        if (!best || distance < best.distance) {
             best = { id: candidate.id, nombre: candidate.nombre, apellido: candidate.apellido, distance };
         }
     }

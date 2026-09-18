@@ -4,6 +4,7 @@ import {
     getFaceDescriptorFromVideo,
     getEnrolledFaceDescriptors,
     findBestMatch,
+    closestMatch,
     type EnrolledFace
 } from '../../logic/api/faceService';
 import { RefreshCw, ScanFace } from 'lucide-react';
@@ -103,18 +104,23 @@ export function FaceCheckIn({ onMatch, paused }: FaceCheckInProps) {
 
                 const match = findBestMatch(descriptor, enrolledRef.current);
                 if (!match) {
-                    setHint('Rostro no reconocido. Usa la búsqueda manual si el problema persiste.');
+                    // Show the closest miss (with its distance) even though it didn't pass the
+                    // threshold - this number is what we need to calibrate MATCH_THRESHOLD.
+                    const closest = closestMatch(descriptor, enrolledRef.current);
+                    setHint(closest
+                        ? `No reconocido (más cercano: ${closest.nombre}, dist. ${closest.distance.toFixed(3)}). Usa la búsqueda manual.`
+                        : 'Rostro no reconocido. Usa la búsqueda manual si el problema persiste.');
                     return;
                 }
 
                 const last = lastMatchRef.current;
                 if (last && last.id === match.id && Date.now() - last.at < MEMBER_COOLDOWN_MS) {
-                    setHint(`Hola de nuevo, ${match.nombre} (ya registrado)`);
+                    setHint(`Hola de nuevo, ${match.nombre} (ya registrado, dist. ${match.distance.toFixed(3)})`);
                     return;
                 }
 
                 lastMatchRef.current = { id: match.id, at: Date.now() };
-                setHint(`¡Reconocido! ${match.nombre} ${match.apellido}`);
+                setHint(`¡Reconocido! ${match.nombre} ${match.apellido} (dist. ${match.distance.toFixed(3)})`);
                 onMatch(match.id);
             } finally {
                 scanningRef.current = false;
