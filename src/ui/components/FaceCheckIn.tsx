@@ -2,12 +2,16 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import {
     ensureModelsLoaded,
     getFaceDescriptorFromVideo,
+    detectFaceLandmarks,
+    eyeAspectRatio,
+    EAR_CLOSED_THRESHOLD,
     getEnrolledFaceDescriptors,
     findBestMatch,
     closestMatch,
-    type EnrolledFace
+    type EnrolledFace,
+    type FaceMatch
 } from '../../logic/api/faceService';
-import { RefreshCw, ScanFace } from 'lucide-react';
+import { RefreshCw, ScanFace, Eye } from 'lucide-react';
 
 interface FaceCheckInProps {
     onMatch: (memberId: string) => void;
@@ -15,9 +19,13 @@ interface FaceCheckInProps {
     paused?: boolean;
 }
 
-type Status = 'loading-models' | 'starting-camera' | 'scanning' | 'error';
+type Status = 'loading-models' | 'starting-camera' | 'scanning' | 'verifying' | 'error';
 
 const SCAN_INTERVAL_MS = 1000;
+const VERIFY_INTERVAL_MS = 250;
+// A static photo held up to the camera can't blink - if nobody blinks within this window,
+// the candidate match is rejected instead of checked in.
+const VERIFY_TIMEOUT_MS = 5000;
 // How long the same member is ignored after a match, so a person standing in front of the
 // tablet doesn't get checked in again every second while they walk away.
 const MEMBER_COOLDOWN_MS = 15000;
@@ -28,6 +36,15 @@ export function FaceCheckIn({ onMatch, paused }: FaceCheckInProps) {
     const enrolledRef = useRef<EnrolledFace[]>([]);
     const lastMatchRef = useRef<{ id: string; at: number } | null>(null);
     const scanningRef = useRef(false);
+
+    // Liveness verification state for the candidate found while 'scanning' - lives in refs
+    // since the tick interval closures shouldn't depend on React re-renders to stay current.
+    const pendingMatchRef = useRef<FaceMatch | null>(null);
+    const verifyStartRef = useRef(0);
+    const sawClosedRef = useRef(false);
+    const sawOpenAfterClosedRef = useRef(false);
+    const noFaceStreakRef = useRef(0);
+    const verifyBusyRef = useRef(false);
 
     const [status, setStatus] = useState<Status>('loading-models');
     const [errorMsg, setErrorMsg] = useState('');
@@ -84,6 +101,7 @@ export function FaceCheckIn({ onMatch, paused }: FaceCheckInProps) {
         };
     }, [loadEnrolled]);
 
+    // Phase 1: look for a candidate match against the enrolled roster.
     useEffect(() => {
         if (status !== 'scanning') return;
 
@@ -115,13 +133,19 @@ export function FaceCheckIn({ onMatch, paused }: FaceCheckInProps) {
 
                 const last = lastMatchRef.current;
                 if (last && last.id === match.id && Date.now() - last.at < MEMBER_COOLDOWN_MS) {
-                    setHint(`Hola de nuevo, ${match.nombre} (ya registrado, dist. ${match.distance.toFixed(3)})`);
+                    setHint(`Hola de nuevo, ${match.nombre} (ya registrado)`);
                     return;
                 }
 
-                lastMatchRef.current = { id: match.id, at: Date.now() };
-                setHint(`¡Reconocido! ${match.nombre} ${match.apellido} (dist. ${match.distance.toFixed(3)})`);
-                onMatch(match.id);
+                // Candidate found - don't check in yet. Confirm it's a live face, not a photo,
+                // before handing it to onMatch.
+                pendingMatchRef.current = match;
+                sawClosedRef.current = false;
+                sawOpenAfterClosedRef.current = false;
+                noFaceStreakRef.current = 0;
+                verifyStartRef.current = Date.now();
+                setHint(`${match.nombre}, parpadea para confirmar...`);
+                setStatus('verifying');
             } finally {
                 scanningRef.current = false;
             }
@@ -129,7 +153,69 @@ export function FaceCheckIn({ onMatch, paused }: FaceCheckInProps) {
 
         const interval = setInterval(tick, SCAN_INTERVAL_MS);
         return () => clearInterval(interval);
+    }, [status, paused]);
+
+    // Phase 2: liveness check - require a blink (eyes open -> closed -> open again) within
+    // the time window before actually checking the candidate in. Defeats holding up a static
+    // photo of an enrolled member's face; doesn't defend against a played-back video.
+    useEffect(() => {
+        if (status !== 'verifying') return;
+
+        const finishVerification = (confirmed: boolean) => {
+            const candidate = pendingMatchRef.current;
+            if (confirmed && candidate) {
+                lastMatchRef.current = { id: candidate.id, at: Date.now() };
+                setHint(`¡Reconocido! ${candidate.nombre} ${candidate.apellido}`);
+                onMatch(candidate.id);
+            } else {
+                setHint('No se detectó parpadeo (¿foto en vez de rostro real?). Intenta de nuevo.');
+            }
+            pendingMatchRef.current = null;
+            setStatus('scanning');
+        };
+
+        const tick = async () => {
+            if (paused || verifyBusyRef.current || !videoRef.current) return;
+            verifyBusyRef.current = true;
+            try {
+                if (Date.now() - verifyStartRef.current > VERIFY_TIMEOUT_MS) {
+                    finishVerification(false);
+                    return;
+                }
+
+                const result = await detectFaceLandmarks(videoRef.current);
+                if (!result) {
+                    noFaceStreakRef.current += 1;
+                    // ~1s of no face - they likely stepped away, stop waiting on this candidate.
+                    if (noFaceStreakRef.current >= 4) finishVerification(false);
+                    return;
+                }
+                noFaceStreakRef.current = 0;
+
+                const ear = (eyeAspectRatio(result.landmarks.getLeftEye()) + eyeAspectRatio(result.landmarks.getRightEye())) / 2;
+
+                if (ear < EAR_CLOSED_THRESHOLD) {
+                    sawClosedRef.current = true;
+                } else if (sawClosedRef.current) {
+                    sawOpenAfterClosedRef.current = true;
+                }
+
+                if (sawClosedRef.current && sawOpenAfterClosedRef.current) {
+                    finishVerification(true);
+                }
+            } finally {
+                verifyBusyRef.current = false;
+            }
+        };
+
+        const interval = setInterval(tick, VERIFY_INTERVAL_MS);
+        return () => clearInterval(interval);
     }, [status, paused, onMatch]);
+
+    const isLive = status === 'scanning' || status === 'verifying';
+    const borderColor = paused
+        ? 'var(--color-warning)'
+        : status === 'verifying' ? 'var(--color-accent)' : 'var(--color-success)';
 
     return (
         <div style={{ textAlign: 'center' }}>
@@ -140,9 +226,10 @@ export function FaceCheckIn({ onMatch, paused }: FaceCheckInProps) {
                     playsInline
                     style={{
                         width: '100%', maxWidth: '360px', borderRadius: '12px',
-                        display: status === 'scanning' ? 'block' : 'none',
+                        display: isLive ? 'block' : 'none',
                         transform: 'scaleX(-1)',
-                        border: paused ? '3px solid var(--color-warning)' : '3px solid var(--color-success)'
+                        border: `3px solid ${borderColor}`,
+                        transition: 'border-color 0.2s'
                     }}
                 />
             </div>
@@ -157,10 +244,11 @@ export function FaceCheckIn({ onMatch, paused }: FaceCheckInProps) {
                 <p style={{ color: 'var(--color-danger)', fontSize: '14px' }}>{errorMsg}</p>
             )}
 
-            {status === 'scanning' && (
+            {isLive && (
                 <>
-                    <p style={{ color: 'var(--color-text-secondary)', fontSize: '13px', marginTop: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-                        <ScanFace size={14} /> {paused ? 'Procesando...' : hint || 'Escaneando...'}
+                    <p style={{ color: status === 'verifying' ? 'var(--color-accent)' : 'var(--color-text-secondary)', fontSize: '13px', marginTop: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontWeight: status === 'verifying' ? 600 : 400 }}>
+                        {status === 'verifying' ? <Eye size={14} /> : <ScanFace size={14} />}
+                        {paused ? 'Procesando...' : hint || 'Escaneando...'}
                     </p>
                     <button
                         type="button"

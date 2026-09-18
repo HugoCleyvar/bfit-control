@@ -41,6 +41,29 @@ export async function detectFaceBox(video: HTMLVideoElement) {
     return faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions());
 }
 
+// Landmarks without the recognition descriptor - cheaper than getFaceDescriptorFromVideo,
+// used to track eye state during liveness verification once we already know who we're
+// checking (see eyeAspectRatio below).
+export async function detectFaceLandmarks(video: HTMLVideoElement) {
+    return faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks();
+}
+
+// Eye Aspect Ratio (Soukupova & Cech, 2016): stays roughly constant (~0.25-0.35) while an
+// eye is open and drops sharply on a blink. Used as a liveness check - a static photo held
+// up to the camera can't blink, so requiring one before check-in defeats that specific
+// spoof (though not a played-back video of the person).
+export function eyeAspectRatio(eye: { x: number; y: number }[]): number {
+    if (eye.length < 6) return 1; // malformed input - treat as "open" rather than throw
+    const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
+    const vertical = dist(eye[1], eye[5]) + dist(eye[2], eye[4]);
+    const horizontal = dist(eye[0], eye[3]);
+    return horizontal === 0 ? 1 : vertical / (2 * horizontal);
+}
+
+// Below this, an eye is considered closed. Standard literature default - not measured
+// against our own users; tune if verification keeps timing out or triggers too easily.
+export const EAR_CLOSED_THRESHOLD = 0.21;
+
 export interface FacePositionResult {
     status: 'none' | 'too-small' | 'too-large' | 'off-center' | 'good';
     hint: string;
