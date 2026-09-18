@@ -28,7 +28,7 @@ const SCAN_INTERVAL_MS = 1000;
 const VERIFY_INTERVAL_MS = 120;
 // A static photo held up to the camera can't blink - if nobody blinks within this window,
 // the candidate match is rejected instead of checked in.
-const VERIFY_TIMEOUT_MS = 5000;
+const VERIFY_TIMEOUT_MS = 7000;
 // How long the same member is ignored after a match, so a person standing in front of the
 // tablet doesn't get checked in again every second while they walk away.
 const MEMBER_COOLDOWN_MS = 15000;
@@ -203,7 +203,8 @@ export function FaceCheckIn({ onMatch, paused }: FaceCheckInProps) {
 
                 const ear = (eyeAspectRatio(result.landmarks.getLeftEye()) + eyeAspectRatio(result.landmarks.getRightEye())) / 2;
                 minEarRef.current = Math.min(minEarRef.current, ear);
-                setHint(`${pendingMatchRef.current?.nombre}, parpadea para confirmar... (EAR mín. ${minEarRef.current.toFixed(3)})`);
+                const secondsLeft = Math.max(0, Math.ceil((VERIFY_TIMEOUT_MS - (Date.now() - verifyStartRef.current)) / 1000));
+                setHint(`${pendingMatchRef.current?.nombre}, parpadea para confirmar... (${secondsLeft}s, EAR mín. ${minEarRef.current.toFixed(3)})`);
 
                 if (ear < EAR_CLOSED_THRESHOLD) {
                     sawClosedRef.current = true;
