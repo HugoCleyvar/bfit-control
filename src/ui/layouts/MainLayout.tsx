@@ -11,7 +11,8 @@ interface TopbarProps {
 }
 
 function Topbar({ onMenuToggle }: TopbarProps) {
-    const { user, isAdmin } = useAuth();
+    const { user, isAdmin, isEntrenador } = useAuth();
+    const roleLabel = isAdmin ? 'Administrador' : isEntrenador ? 'Entrenador' : 'Recepcionista';
     return (
         <header className="topbar">
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-md)' }}>
@@ -33,7 +34,7 @@ function Topbar({ onMenuToggle }: TopbarProps) {
                     <div className="avatar">{user?.nombre?.[0] || 'U'}</div>
                     <div className="user-info">
                         <span className="name">{user?.nombre || 'Usuario'}</span>
-                        <span className="role">{isAdmin ? 'Administrador' : 'Colaborador'}</span>
+                        <span className="role">{roleLabel}</span>
                     </div>
                 </div>
             </div>

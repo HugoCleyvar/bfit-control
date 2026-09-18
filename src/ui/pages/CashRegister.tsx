@@ -7,11 +7,21 @@ import { DenominationCounter } from '../components/DenominationCounter';
 import { CloseShiftModal } from '../components/CloseShiftModal';
 import { InventoryCounter, type InventoryItemCount } from '../components/InventoryCounter';
 import { getProducts, type Product } from '../../logic/api/productService';
-import { Lock, Unlock, DollarSign, PlusCircle, MinusCircle, History, Package, X } from 'lucide-react';
+import { Lock, Unlock, DollarSign, PlusCircle, MinusCircle, History, Package, X, LogIn, LogOut, RefreshCw } from 'lucide-react';
 
 export default function CashRegister() {
     const { user } = useAuth();
-    const { currentShift: shift, openShift, closeShift, isLoadingShift: shiftLoading } = useShift();
+    const {
+        currentShift: shift,
+        openShift,
+        closeShift,
+        isLoadingShift: shiftLoading,
+        canManageShift,
+        openableShifts,
+        joinShift,
+        leaveShift,
+        refreshShift
+    } = useShift();
 
     // Local state only for expenses and UI forms
     const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -87,6 +97,74 @@ export default function CashRegister() {
 
     // --- VIEW: SHIFT CLOSED ---
     if (!shift) {
+        // Recepcionista never opens her own cash drawer - she joins whichever entrenador
+        // already has one open.
+        if (!canManageShift) {
+            return (
+                <div className="page-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '70vh', padding: '16px' }}>
+                    <div style={{
+                        maxWidth: '440px',
+                        width: '100%',
+                        padding: 'clamp(20px, 4vw, 32px)',
+                        backgroundColor: 'var(--color-card)',
+                        borderRadius: '16px',
+                        border: '1px solid var(--color-border)',
+                        boxShadow: '0 10px 30px rgba(0,0,0,0.3)',
+                        textAlign: 'center'
+                    }}>
+                        <div style={{
+                            width: '64px',
+                            height: '64px',
+                            borderRadius: '50%',
+                            background: 'rgba(255,255,255,0.05)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            margin: '0 auto 16px'
+                        }}>
+                            <LogIn size={32} color="var(--color-accent)" />
+                        </div>
+                        <h2 style={{ marginBottom: '8px', fontSize: '22px' }}>Unirte a un Turno</h2>
+
+                        {openableShifts.length === 0 ? (
+                            <>
+                                <p style={{ color: 'var(--color-text-secondary)', marginBottom: '24px', fontSize: '14px' }}>
+                                    Todavía no hay ningún turno abierto. Espera a que tu entrenador responsable abra caja.
+                                </p>
+                                <button
+                                    onClick={() => refreshShift()}
+                                    style={{ background: 'rgba(255,255,255,0.1)', padding: '10px 20px', borderRadius: '20px', fontSize: '14px', display: 'inline-flex', alignItems: 'center', gap: '8px', border: 'none', color: 'var(--color-text-primary)', cursor: 'pointer' }}
+                                >
+                                    <RefreshCw size={16} /> Actualizar
+                                </button>
+                            </>
+                        ) : (
+                            <>
+                                <p style={{ color: 'var(--color-text-secondary)', marginBottom: '20px', fontSize: '14px' }}>
+                                    Elige a qué turno vas a apoyar en recepción:
+                                </p>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                    {openableShifts.map(s => (
+                                        <button
+                                            key={s.id}
+                                            onClick={() => joinShift(s.id)}
+                                            style={{
+                                                width: '100%', padding: '14px', fontSize: '15px', fontWeight: 'bold',
+                                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                                                borderRadius: '10px', background: 'var(--color-primary)', border: 'none', color: 'white', cursor: 'pointer'
+                                            }}
+                                        >
+                                            <LogIn size={18} /> {s.colaborador_nombre || 'Turno'} · {s.horario === 'matutino' ? 'Matutino' : 'Vespertino'}
+                                        </button>
+                                    ))}
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
         return (
             <div className="page-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '70vh', padding: '16px' }}>
                 <div style={{
@@ -209,6 +287,12 @@ export default function CashRegister() {
                 </span>
             </div>
 
+            {!canManageShift && (
+                <p style={{ color: 'var(--color-text-secondary)', fontSize: '14px', marginTop: '-10px', marginBottom: '16px' }}>
+                    Apoyando el turno de <strong>{shift.colaborador_nombre || 'tu entrenador'}</strong>
+                </p>
+            )}
+
             {/* KPI Cards (Responsive Grid) */}
             <div style={{
                 display: 'grid',
@@ -307,30 +391,61 @@ export default function CashRegister() {
                 {/* Shift Actions Card */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                     <div style={{ background: 'var(--color-card)', padding: '20px', borderRadius: '12px', border: '1px solid var(--color-border)' }}>
-                        <h3 style={{ margin: '0 0 8px 0', fontSize: '17px' }}>Cierre y Arqueo de Turno</h3>
-                        <p style={{ color: 'var(--color-text-secondary)', marginBottom: '20px', fontSize: '14px', lineHeight: '1.4' }}>
-                            Al finalizar tu jornada laboral, realiza el arqueo completo con conteo de dinero e inventario.
-                        </p>
-                        <button
-                            onClick={() => setShowCloseModal(true)}
-                            style={{
-                                width: '100%',
-                                background: 'var(--color-danger)',
-                                border: 'none',
-                                color: 'white',
-                                padding: '14px',
-                                borderRadius: '10px',
-                                fontSize: '16px',
-                                fontWeight: 'bold',
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: '8px'
-                            }}
-                        >
-                            Cerrar Turno (Arqueo de Caja)
-                        </button>
+                        {canManageShift ? (
+                            <>
+                                <h3 style={{ margin: '0 0 8px 0', fontSize: '17px' }}>Cierre y Arqueo de Turno</h3>
+                                <p style={{ color: 'var(--color-text-secondary)', marginBottom: '20px', fontSize: '14px', lineHeight: '1.4' }}>
+                                    Al finalizar tu jornada laboral, realiza el arqueo completo con conteo de dinero e inventario.
+                                </p>
+                                <button
+                                    onClick={() => setShowCloseModal(true)}
+                                    style={{
+                                        width: '100%',
+                                        background: 'var(--color-danger)',
+                                        border: 'none',
+                                        color: 'white',
+                                        padding: '14px',
+                                        borderRadius: '10px',
+                                        fontSize: '16px',
+                                        fontWeight: 'bold',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: '8px'
+                                    }}
+                                >
+                                    Cerrar Turno (Arqueo de Caja)
+                                </button>
+                            </>
+                        ) : (
+                            <>
+                                <h3 style={{ margin: '0 0 8px 0', fontSize: '17px' }}>Corte de Caja</h3>
+                                <p style={{ color: 'var(--color-text-secondary)', marginBottom: '20px', fontSize: '14px', lineHeight: '1.4' }}>
+                                    El corte y cierre de este turno lo hace tu entrenador responsable. Rinde cuentas con {shift.colaborador_nombre || 'él/ella'} al terminar tu apoyo.
+                                </p>
+                                <button
+                                    onClick={() => leaveShift()}
+                                    style={{
+                                        width: '100%',
+                                        background: 'rgba(255,255,255,0.08)',
+                                        border: '1px solid var(--color-border)',
+                                        color: 'var(--color-text-primary)',
+                                        padding: '14px',
+                                        borderRadius: '10px',
+                                        fontSize: '15px',
+                                        fontWeight: 'bold',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: '8px'
+                                    }}
+                                >
+                                    <LogOut size={18} /> Dejar de Apoyar este Turno
+                                </button>
+                            </>
+                        )}
                     </div>
                 </div>
             </div>

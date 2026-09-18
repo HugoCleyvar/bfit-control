@@ -56,7 +56,7 @@ function App() {
                 </ProtectedRoute>
               }>
                 <Route index element={
-                  <ProtectedRoute allowedRoles={['admin', 'colaborador']}>
+                  <ProtectedRoute allowedRoles={['admin', 'entrenador', 'recepcionista']}>
                     <Dashboard />
                   </ProtectedRoute>
                 } />
@@ -80,14 +80,14 @@ function App() {
                   </ProtectedRoute>
                 } />
                 <Route path="products" element={
-                  <ProtectedRoute allowedRoles={['admin', 'colaborador']}>
+                  <ProtectedRoute allowedRoles={['admin', 'entrenador', 'recepcionista']}>
                     <Products />
                   </ProtectedRoute>
                 } />
               </Route>
 
               <Route path="/shifts" element={
-                <ProtectedRoute allowedRoles={['admin', 'colaborador']}>
+                <ProtectedRoute allowedRoles={['admin', 'entrenador', 'recepcionista']}>
                   <CashRegister />
                 </ProtectedRoute>
               } />
