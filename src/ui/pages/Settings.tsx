@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { createCollaborator } from '../../logic/api/authService';
+import { createStaffUser } from '../../logic/api/authService';
+import type { UserRole } from '../../domain/types';
 import { Save, UserPlus, Lock } from 'lucide-react';
 
 export default function Settings() {
@@ -62,6 +63,7 @@ function GeneralSettings() {
 
 function UserManagement() {
     const [formData, setFormData] = useState({ nombre: '', email: '', password: '' });
+    const [rol, setRol] = useState<UserRole>('entrenador');
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
@@ -76,10 +78,10 @@ function UserManagement() {
             return;
         }
 
-        const result = await createCollaborator(formData.email, formData.password, formData.nombre);
+        const result = await createStaffUser(formData.email, formData.password, formData.nombre, rol);
 
         if (result.success) {
-            setMessage({ type: 'success', text: 'Colaborador creado exitosamente.' });
+            setMessage({ type: 'success', text: `${rol === 'entrenador' ? 'Entrenador' : 'Recepcionista'} creado exitosamente.` });
             setFormData({ nombre: '', email: '', password: '' });
         } else {
             setMessage({ type: 'error', text: result.error || 'Error al crear usuario.' });
@@ -89,9 +91,9 @@ function UserManagement() {
 
     return (
         <div className="card">
-            <h3><UserPlus size={20} style={{ verticalAlign: 'middle', marginRight: '10px' }} /> Nuevo Colaborador</h3>
+            <h3><UserPlus size={20} style={{ verticalAlign: 'middle', marginRight: '10px' }} /> Nuevo Usuario</h3>
             <p style={{ color: 'var(--color-text-secondary)', marginBottom: '20px' }}>
-                Registra un nuevo usuario con acceso al sistema (Rol: Colaborador).
+                Registra un nuevo usuario con acceso al sistema.
             </p>
 
             {message && (
@@ -108,6 +110,17 @@ function UserManagement() {
             )}
 
             <form onSubmit={handleSubmit} style={{ display: 'grid', gap: '15px', maxWidth: '500px' }}>
+                <div className="form-group">
+                    <label>Rol</label>
+                    <select
+                        className="input-field"
+                        value={rol}
+                        onChange={e => setRol(e.target.value as UserRole)}
+                    >
+                        <option value="entrenador">Entrenador (responsable de turno y corte de caja)</option>
+                        <option value="recepcionista">Recepcionista (apoyo en turno de un entrenador)</option>
+                    </select>
+                </div>
                 <div className="form-group">
                     <label>Nombre Completo</label>
                     <input

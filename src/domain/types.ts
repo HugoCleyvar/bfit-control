@@ -1,6 +1,6 @@
 export type UUID = string;
 
-export type UserRole = 'admin' | 'colaborador';
+export type UserRole = 'admin' | 'entrenador' | 'recepcionista';
 export type UserStatus = 'activo' | 'inactivo';
 export type SubscriptionStatus = 'activa' | 'vencida' | 'cancelada';
 

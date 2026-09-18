@@ -37,7 +37,7 @@ export default function AttendancePage() {
 
         // Security Check
         if (!isAdmin && !currentShift) {
-            alert('Debes abrir un turno para registrar asistencias.');
+            alert('Debes tener un turno abierto (ábrelo o únete a uno en Turnos y Caja) para registrar asistencias.');
             return;
         }
 
