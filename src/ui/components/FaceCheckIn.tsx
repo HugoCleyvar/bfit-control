@@ -22,7 +22,10 @@ interface FaceCheckInProps {
 type Status = 'loading-models' | 'starting-camera' | 'scanning' | 'verifying' | 'error';
 
 const SCAN_INTERVAL_MS = 1000;
-const VERIFY_INTERVAL_MS = 250;
+// A blink only lasts ~100-300ms total - sampling too slowly can step right over the
+// fully-closed frame and never see it at all. Fast enough to catch it, still cheap since
+// this phase only runs the landmarks model, not the full recognition pipeline.
+const VERIFY_INTERVAL_MS = 120;
 // A static photo held up to the camera can't blink - if nobody blinks within this window,
 // the candidate match is rejected instead of checked in.
 const VERIFY_TIMEOUT_MS = 5000;
@@ -45,6 +48,10 @@ export function FaceCheckIn({ onMatch, paused }: FaceCheckInProps) {
     const sawOpenAfterClosedRef = useRef(false);
     const noFaceStreakRef = useRef(0);
     const verifyBusyRef = useRef(false);
+    // Lowest EAR seen so far this verification attempt - shown live so we can calibrate
+    // EAR_CLOSED_THRESHOLD from real numbers instead of the textbook default, same as we
+    // did for MATCH_THRESHOLD.
+    const minEarRef = useRef(1);
 
     const [status, setStatus] = useState<Status>('loading-models');
     const [errorMsg, setErrorMsg] = useState('');
@@ -143,6 +150,7 @@ export function FaceCheckIn({ onMatch, paused }: FaceCheckInProps) {
                 sawClosedRef.current = false;
                 sawOpenAfterClosedRef.current = false;
                 noFaceStreakRef.current = 0;
+                minEarRef.current = 1;
                 verifyStartRef.current = Date.now();
                 setHint(`${match.nombre}, parpadea para confirmar...`);
                 setStatus('verifying');
@@ -163,12 +171,13 @@ export function FaceCheckIn({ onMatch, paused }: FaceCheckInProps) {
 
         const finishVerification = (confirmed: boolean) => {
             const candidate = pendingMatchRef.current;
+            const minEar = minEarRef.current.toFixed(3);
             if (confirmed && candidate) {
                 lastMatchRef.current = { id: candidate.id, at: Date.now() };
-                setHint(`¡Reconocido! ${candidate.nombre} ${candidate.apellido}`);
+                setHint(`¡Reconocido! ${candidate.nombre} ${candidate.apellido} (EAR mín. ${minEar})`);
                 onMatch(candidate.id);
             } else {
-                setHint('No se detectó parpadeo (¿foto en vez de rostro real?). Intenta de nuevo.');
+                setHint(`No se detectó parpadeo (EAR mín. visto: ${minEar}). Intenta de nuevo.`);
             }
             pendingMatchRef.current = null;
             setStatus('scanning');
@@ -193,6 +202,8 @@ export function FaceCheckIn({ onMatch, paused }: FaceCheckInProps) {
                 noFaceStreakRef.current = 0;
 
                 const ear = (eyeAspectRatio(result.landmarks.getLeftEye()) + eyeAspectRatio(result.landmarks.getRightEye())) / 2;
+                minEarRef.current = Math.min(minEarRef.current, ear);
+                setHint(`${pendingMatchRef.current?.nombre}, parpadea para confirmar... (EAR mín. ${minEarRef.current.toFixed(3)})`);
 
                 if (ear < EAR_CLOSED_THRESHOLD) {
                     sawClosedRef.current = true;
