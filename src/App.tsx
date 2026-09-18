@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Suspense, lazy } from 'react';
 import { AuthProvider } from './logic/authContext';
 import { ShiftProvider } from './logic/shiftContext';
+import { NotificationsProvider } from './logic/notificationsContext';
 import { ProtectedRoute } from './ui/components/ProtectedRoute';
 import { MainLayout } from './ui/layouts/MainLayout';
 
@@ -45,57 +46,59 @@ function App() {
   return (
     <AuthProvider>
       <ShiftProvider>
-        <BrowserRouter>
-          <Suspense fallback={<PageLoader />}>
-            <Routes>
-              <Route path="/login" element={<Login />} />
+        <NotificationsProvider>
+          <BrowserRouter>
+            <Suspense fallback={<PageLoader />}>
+              <Routes>
+                <Route path="/login" element={<Login />} />
 
-              <Route path="/" element={
-                <ProtectedRoute>
-                  <MainLayout />
-                </ProtectedRoute>
-              }>
-                <Route index element={
+                <Route path="/" element={
+                  <ProtectedRoute>
+                    <MainLayout />
+                  </ProtectedRoute>
+                }>
+                  <Route index element={
+                    <ProtectedRoute allowedRoles={['admin', 'entrenador', 'recepcionista']}>
+                      <Dashboard />
+                    </ProtectedRoute>
+                  } />
+                  <Route path="members" element={<Members />} />
+                  <Route path="attendance" element={<Attendance />} />
+                  <Route path="payments" element={<Payments />} />
+                  <Route path="shifts" element={<CashRegister />} />
+                  <Route path="reports" element={
+                    <ProtectedRoute allowedRoles={['admin']}>
+                      <Reports />
+                    </ProtectedRoute>
+                  } />
+                  <Route path="plans" element={
+                    <ProtectedRoute allowedRoles={['admin']}>
+                      <Plans />
+                    </ProtectedRoute>
+                  } />
+                  <Route path="settings" element={
+                    <ProtectedRoute allowedRoles={['admin']}>
+                      <Settings />
+                    </ProtectedRoute>
+                  } />
+                  <Route path="products" element={
+                    <ProtectedRoute allowedRoles={['admin', 'entrenador', 'recepcionista']}>
+                      <Products />
+                    </ProtectedRoute>
+                  } />
+                </Route>
+
+                <Route path="/shifts" element={
                   <ProtectedRoute allowedRoles={['admin', 'entrenador', 'recepcionista']}>
-                    <Dashboard />
+                    <CashRegister />
                   </ProtectedRoute>
                 } />
-                <Route path="members" element={<Members />} />
-                <Route path="attendance" element={<Attendance />} />
-                <Route path="payments" element={<Payments />} />
-                <Route path="shifts" element={<CashRegister />} />
-                <Route path="reports" element={
-                  <ProtectedRoute allowedRoles={['admin']}>
-                    <Reports />
-                  </ProtectedRoute>
-                } />
-                <Route path="plans" element={
-                  <ProtectedRoute allowedRoles={['admin']}>
-                    <Plans />
-                  </ProtectedRoute>
-                } />
-                <Route path="settings" element={
-                  <ProtectedRoute allowedRoles={['admin']}>
-                    <Settings />
-                  </ProtectedRoute>
-                } />
-                <Route path="products" element={
-                  <ProtectedRoute allowedRoles={['admin', 'entrenador', 'recepcionista']}>
-                    <Products />
-                  </ProtectedRoute>
-                } />
-              </Route>
 
-              <Route path="/shifts" element={
-                <ProtectedRoute allowedRoles={['admin', 'entrenador', 'recepcionista']}>
-                  <CashRegister />
-                </ProtectedRoute>
-              } />
-
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </Suspense>
-        </BrowserRouter>
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </Suspense>
+          </BrowserRouter>
+        </NotificationsProvider>
       </ShiftProvider>
     </AuthProvider>
   );
