@@ -60,9 +60,11 @@ export function eyeAspectRatio(eye: { x: number; y: number }[]): number {
     return horizontal === 0 ? 1 : vertical / (2 * horizontal);
 }
 
-// Below this, an eye is considered closed. Standard literature default - not measured
-// against our own users; tune if verification keeps timing out or triggers too easily.
-export const EAR_CLOSED_THRESHOLD = 0.21;
+// Below this, an eye is considered closed. Started at the literature default (0.21), but a
+// real blink test only reached 0.219 - just short of it - so raised to give real blinks
+// margin to cross. Keep tuning from the live "EAR mín." shown in FaceCheckIn if it still
+// times out on genuine blinks, or triggers without one.
+export const EAR_CLOSED_THRESHOLD = 0.25;
 
 export interface FacePositionResult {
     status: 'none' | 'too-small' | 'too-large' | 'off-center' | 'good';
