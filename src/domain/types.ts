@@ -26,6 +26,12 @@ export interface Member {
     colaborador_id?: UUID; // Who registered
     visitas_disponibles?: number;
     ultima_visita?: string; // ISO Date
+
+    // Face recognition (check-in only) - descriptor is a 128-d face embedding vector,
+    // never a photo. Only usable once consentimiento_facial is true.
+    descriptor_facial?: number[] | null;
+    consentimiento_facial?: boolean;
+    descriptor_facial_actualizado?: string; // ISO Date
 }
 
 // Planes

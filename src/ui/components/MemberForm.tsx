@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import type { Member } from '../../domain/types';
 import { X, Save, User, Phone, Calendar, Image as ImageIcon } from 'lucide-react';
+import { FaceCapture } from './FaceCapture';
 
 interface MemberFormData {
     nombre: string;
@@ -9,6 +10,9 @@ interface MemberFormData {
     fecha_nacimiento: string;
     foto_url: string;
     fecha_vencimiento: string;
+    descriptor_facial?: number[] | null;
+    consentimiento_facial?: boolean;
+    descriptor_facial_actualizado?: string;
 }
 
 interface MemberFormProps {
@@ -29,7 +33,10 @@ export function MemberForm({ initialData, onSubmit, onCancel, title, showExpirat
         telefono: initialData?.telefono || '',
         fecha_nacimiento: initialData?.fecha_nacimiento ? initialData.fecha_nacimiento.split('T')[0] : '',
         foto_url: initialData?.foto_url || '',
-        fecha_vencimiento: initialData?.fecha_vencimiento ? initialData.fecha_vencimiento.split('T')[0] : ''
+        fecha_vencimiento: initialData?.fecha_vencimiento ? initialData.fecha_vencimiento.split('T')[0] : '',
+        descriptor_facial: initialData?.descriptor_facial ?? null,
+        consentimiento_facial: initialData?.consentimiento_facial ?? false,
+        descriptor_facial_actualizado: initialData?.descriptor_facial_actualizado
     }), [initialData]);
 
     const [formData, setFormData] = useState<MemberFormData>(initialFormData);
@@ -130,6 +137,17 @@ export function MemberForm({ initialData, onSubmit, onCancel, title, showExpirat
                             />
                         </div>
                     </div>
+
+                    <FaceCapture
+                        hasExistingFace={!!initialFormData.descriptor_facial}
+                        onCapture={(descriptor) => setFormData(prev => ({
+                            ...prev,
+                            descriptor_facial: descriptor,
+                            consentimiento_facial: true,
+                            descriptor_facial_actualizado: new Date().toISOString()
+                        }))}
+                    />
+
                     {showExpirationField && (
                         <div style={{ padding: '10px', backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: 'var(--radius-md)', border: '1px dashed var(--color-border)' }}>
                             <label style={{ display: 'block', marginBottom: '8px', fontSize: 'var(--font-size-sm)', color: 'var(--color-warning)' }}>Vencimiento Membresía (Manual)</label>
