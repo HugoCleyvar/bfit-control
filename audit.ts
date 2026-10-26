@@ -6,7 +6,7 @@ import path from 'path';
 
 // 1. Load Env Vars Manually
 console.log('--- 🔍 STARTING SYSTEM AUDIT ---');
-const envPath = path.resolve(process.cwd(), '   ');
+const envPath = path.resolve(process.cwd(), '.env');
 let SUPABASE_URL = '';
 let SUPABASE_KEY = '';
 
@@ -43,10 +43,16 @@ async function runAudit() {
     }
 
     // 3. Test Authentication
-    console.log('\n--- 🔐 TESTING LOGIN (REDACTED_EMAIL) ---');
+    const AUDIT_EMAIL = process.env.AUDIT_EMAIL;
+    const AUDIT_PASSWORD = process.env.AUDIT_PASSWORD;
+    if (!AUDIT_EMAIL || !AUDIT_PASSWORD) {
+        console.error('❌ Missing AUDIT_EMAIL / AUDIT_PASSWORD env vars. Run as: AUDIT_EMAIL=... AUDIT_PASSWORD=... npx tsx audit.ts');
+        process.exit(1);
+    }
+    console.log(`\n--- 🔐 TESTING LOGIN (${AUDIT_EMAIL}) ---`);
     const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email: 'REDACTED_EMAIL',
-        password: 'REDACTED_PASSWORD'
+        email: AUDIT_EMAIL,
+        password: AUDIT_PASSWORD
     });
 
     if (authError) {
