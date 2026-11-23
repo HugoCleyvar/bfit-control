@@ -47,22 +47,20 @@ export async function detectDescriptor(video: HTMLVideoElement): Promise<number[
     return result ? Array.from(result.descriptor) : null;
 }
 
-/** Fast landmark-only measurements for liveness (no descriptor, so it can run every frame). */
+/** Head-pose measurements (yaw/pitch) for liveness (no descriptor, so it can run every frame). */
 export async function detectMetrics(video: HTMLVideoElement): Promise<FrameMetrics | null> {
     const result = await faceapi
         .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 }))
         .withFaceLandmarks();
     if (!result) return null;
     const pts = result.landmarks.positions;
-    const dist = (a: faceapi.Point, b: faceapi.Point) => Math.hypot(a.x - b.x, a.y - b.y);
-    const ear = (e: faceapi.Point[]) => (dist(e[1], e[5]) + dist(e[2], e[4])) / (2 * dist(e[0], e[3]));
-    const leftEye = pts.slice(36, 42);
-    const rightEye = pts.slice(42, 48);
     const jawW = pts[16].x - pts[0].x;
-    if (jawW <= 0) return null;
+    const eyeY = pts.slice(36, 48).reduce((sum, p) => sum + p.y, 0) / 12;
+    const noseToChin = pts[8].y - eyeY;
+    if (jawW <= 0 || noseToChin <= 0) return null;
     return {
-        ear: (ear(leftEye) + ear(rightEye)) / 2,
         yaw: (pts[30].x - pts[0].x) / jawW,
+        pitch: (pts[30].y - eyeY) / noseToChin,
     };
 }
 
