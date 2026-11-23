@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { registerCheckIn, getTodayAttendance } from '../../logic/api/attendanceService';
 import type { CheckInResult } from '../../logic/api/attendanceService';
 import type { Attendance } from '../../domain/types';
@@ -8,13 +8,19 @@ import { DataTable } from '../components/DataTable';
 import type { Column } from '../components/DataTable';
 // Removed unused getMembers import
 import { MemberSearch } from '../components/MemberSearch';
-import { Search, XCircle, CheckCircle } from 'lucide-react';
+import { FaceScanner } from '../components/FaceScanner';
+import { getEnrolledFaces, findBestMatch } from '../../logic/faceService';
+import type { EnrolledFace } from '../../logic/faceService';
+import { Search, XCircle, CheckCircle, ScanFace } from 'lucide-react';
 
 export default function AttendancePage() {
     const [query, setQuery] = useState('');
     const [checkInResult, setCheckInResult] = useState<CheckInResult | null>(null);
     const [attendanceList, setAttendanceList] = useState<Attendance[]>([]);
     const [loading, setLoading] = useState(false);
+    const [faceOpen, setFaceOpen] = useState(false);
+    const [faceStatus, setFaceStatus] = useState('');
+    const enrolledRef = useRef<EnrolledFace[]>([]);
 
     const loadData = useCallback(async () => {
         // Load in parallel
@@ -63,6 +69,31 @@ export default function AttendancePage() {
         }
     };
 
+    const openFaceScanner = async () => {
+        if (!isAdmin && !currentShift) {
+            alert('Debes abrir un turno para registrar asistencias.');
+            return;
+        }
+        setFaceStatus('');
+        enrolledRef.current = await getEnrolledFaces();
+        if (enrolledRef.current.length === 0) {
+            alert('No hay rostros registrados. Registra el rostro de un miembro desde Miembros.');
+            return;
+        }
+        setFaceOpen(true);
+    };
+
+    const handleFaceDescriptor = async (descriptor: number[]) => {
+        const match = findBestMatch(descriptor, enrolledRef.current);
+        if (!match) {
+            setFaceStatus('Rostro no reconocido, intenta de nuevo...');
+            return false;
+        }
+        setFaceOpen(false);
+        await handleCheckIn(undefined, match.face.id);
+        return true;
+    };
+
     const columns: Column<Attendance>[] = [
         { header: 'Hora', accessor: (item) => new Date(item.fecha_hora).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
         { header: 'Miembro', accessor: (item) => item.usuario ? `${item.usuario.nombre} ${item.usuario.apellido}` : 'Desconocido' },
@@ -94,6 +125,15 @@ export default function AttendancePage() {
                             onSelect={(id) => handleCheckIn(undefined, id)}
                         />
                     </div>
+
+                    <button
+                        type="button"
+                        onClick={openFaceScanner}
+                        disabled={loading}
+                        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: 'var(--spacing-md)' }}
+                    >
+                        <ScanFace size={18} /> Registrar por rostro
+                    </button>
 
                     <div style={{ position: 'relative', textAlign: 'center', margin: '10px 0', opacity: 0.5 }}>- O -</div>
 
@@ -151,6 +191,16 @@ export default function AttendancePage() {
                     />
                 </div>
             </div>
+
+            {faceOpen && (
+                <FaceScanner
+                    title="Registrar por rostro"
+                    hint="Mira de frente a la cámara."
+                    status={faceStatus}
+                    onDescriptor={handleFaceDescriptor}
+                    onClose={() => setFaceOpen(false)}
+                />
+            )}
         </div>
     );
 }

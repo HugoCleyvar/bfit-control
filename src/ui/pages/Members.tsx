@@ -11,7 +11,9 @@ import { MemberForm } from '../components/MemberForm';
 import { getMemberStats } from '../../logic/api/gamificationService';
 import { getMemberPayments } from '../../logic/api/financeService';
 import type { PaymentWithDetails } from '../../logic/api/financeService';
-import { MessageCircle, Trophy, Flame } from 'lucide-react';
+import { MessageCircle, Trophy, Flame, ScanFace } from 'lucide-react';
+import { FaceScanner } from '../components/FaceScanner';
+import { saveFaceDescriptor, removeFaceData } from '../../logic/faceService';
 
 interface MemberFormData {
     nombre: string;
@@ -105,6 +107,11 @@ export default function Members() {
     const [editingMember, setEditingMember] = useState<MemberWithStatus | undefined>(undefined);
 
     const selectedMember = members.find(m => m.id === selectedMemberId);
+
+    // Face enrollment
+    const [faceMember, setFaceMember] = useState<MemberWithStatus | null>(null);
+    const [faceConsent, setFaceConsent] = useState(false);
+    const [faceStatus, setFaceStatus] = useState('');
     const displayedMembers = selectedMember ? [selectedMember] : members;
 
     const loadMembers = useCallback(async () => {
@@ -201,6 +208,25 @@ export default function Members() {
 
 
 
+
+    const handleFaceEnroll = async (descriptor: number[]) => {
+        if (!faceMember) return true;
+        const ok = await saveFaceDescriptor(faceMember.id, descriptor);
+        if (ok) {
+            setFaceMember(null);
+            await loadMembers();
+            alert('Rostro registrado correctamente.');
+        } else {
+            setFaceStatus('Error al guardar el rostro. Intenta de nuevo.');
+        }
+        return ok;
+    };
+
+    const handleRemoveFace = async (id: string) => {
+        if (!confirm('¿Eliminar los datos faciales de este miembro?')) return;
+        if (await removeFaceData(id)) await loadMembers();
+        else alert('No se pudo eliminar el rostro.');
+    };
 
     const handleDelete = async (id: string) => {
         if (window.confirm('¿Estás seguro de eliminar este miembro? Esta acción no se puede deshacer.')) {
@@ -368,6 +394,24 @@ export default function Members() {
                                 </div>
                             </div>
 
+                            {/* Face enrollment */}
+                            <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', fontSize: '14px' }}>
+                                <ScanFace size={16} />
+                                <span style={{ color: 'var(--color-text-secondary)' }}>
+                                    {selectedMember.descriptor_facial && selectedMember.consentimiento_facial
+                                        ? `Rostro registrado${selectedMember.descriptor_facial_actualizado ? ` (${new Date(selectedMember.descriptor_facial_actualizado).toLocaleDateString()})` : ''}`
+                                        : 'Sin rostro registrado'}
+                                </span>
+                                <button onClick={() => { setFaceConsent(false); setFaceStatus(''); setFaceMember(selectedMember); }} style={{ padding: '4px 12px' }}>
+                                    {selectedMember.descriptor_facial ? 'Actualizar rostro' : 'Registrar rostro'}
+                                </button>
+                                {selectedMember.descriptor_facial && (
+                                    <button onClick={() => handleRemoveFace(selectedMember.id)} style={{ padding: '4px 12px' }} className="text-danger">
+                                        Eliminar rostro
+                                    </button>
+                                )}
+                            </div>
+
                             {/* Member Scorecard */}
                             <div style={{ marginTop: '16px', display: 'flex', gap: '15px' }}>
                                 <Scorecard userId={selectedMember.id} />
@@ -397,6 +441,30 @@ export default function Members() {
                             className: 'text-danger'
                         }
                     ]}
+                />
+            )}
+            {faceMember && !faceConsent && (
+                <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+                    <div style={{ backgroundColor: 'var(--color-card)', borderRadius: 'var(--radius-lg)', padding: 'var(--spacing-lg)', maxWidth: '440px', width: '100%' }}>
+                        <h3 style={{ marginTop: 0 }}>Consentimiento facial</h3>
+                        <p style={{ fontSize: '14px' }}>
+                            {faceMember.nombre} {faceMember.apellido} debe autorizar el uso de su rostro para registrar asistencia.
+                            Solo se guarda un descriptor numérico (no una fotografía) y puede eliminarse en cualquier momento.
+                        </p>
+                        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                            <button onClick={() => setFaceMember(null)}>Cancelar</button>
+                            <button onClick={() => setFaceConsent(true)}>El miembro autoriza</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {faceMember && faceConsent && (
+                <FaceScanner
+                    title={`Registrar rostro: ${faceMember.nombre}`}
+                    hint="Pide al miembro que mire de frente, con buena luz."
+                    status={faceStatus}
+                    onDescriptor={handleFaceEnroll}
+                    onClose={() => setFaceMember(null)}
                 />
             )}
             {isModalOpen && (

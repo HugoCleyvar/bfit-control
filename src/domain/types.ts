@@ -26,6 +26,9 @@ export interface Member {
     colaborador_id?: UUID; // Who registered
     visitas_disponibles?: number;
     ultima_visita?: string; // ISO Date
+    descriptor_facial?: number[] | null;
+    consentimiento_facial?: boolean;
+    descriptor_facial_actualizado?: string | null;
 }
 
 // Planes
