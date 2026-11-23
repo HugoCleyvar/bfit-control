@@ -1,6 +1,47 @@
 import { useEffect, useRef, useState } from 'react';
-import { X } from 'lucide-react';
+import { X, RefreshCw } from 'lucide-react';
 import { loadFaceModels, detectDescriptor } from '../../logic/faceService';
+
+/** Tries progressively looser constraints so laptops, phones and tablets all work. */
+async function openCamera(deviceId?: string): Promise<MediaStream> {
+    const tries: MediaStreamConstraints[] = [];
+    if (deviceId) tries.push({ video: { deviceId: { exact: deviceId } }, audio: false });
+    tries.push({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+    tries.push({ video: { facingMode: 'user' }, audio: false });
+    tries.push({ video: true, audio: false });
+    let lastErr: unknown;
+    for (const c of tries) {
+        try {
+            return await navigator.mediaDevices.getUserMedia(c);
+        } catch (e) {
+            lastErr = e;
+            const name = e instanceof Error ? e.name : '';
+            // Permission problems won't be fixed by looser constraints
+            if (name === 'NotAllowedError' || name === 'SecurityError') break;
+        }
+    }
+    throw lastErr;
+}
+
+function describeError(e: unknown): string {
+    if (!window.isSecureContext) {
+        return 'La cámara solo funciona en una conexión segura (HTTPS). Abre la app con la dirección https://.';
+    }
+    const name = e instanceof Error ? e.name : '';
+    switch (name) {
+        case 'NotAllowedError':
+        case 'SecurityError':
+            return 'Permiso de cámara denegado. Toca el candado/ícono de cámara junto a la dirección del sitio, permite la cámara y pulsa Reintentar.';
+        case 'NotFoundError':
+        case 'OverconstrainedError':
+            return 'No se encontró ninguna cámara en este dispositivo.';
+        case 'NotReadableError':
+        case 'AbortError':
+            return 'La cámara está en uso por otra app o pestaña. Ciérrala y pulsa Reintentar.';
+        default:
+            return e instanceof Error && e.message ? e.message : 'No se pudo iniciar la cámara.';
+    }
+}
 
 interface Props {
     title: string;
@@ -15,6 +56,9 @@ export function FaceScanner({ title, hint, onDescriptor, onClose, status }: Prop
     const videoRef = useRef<HTMLVideoElement>(null);
     const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading');
     const [error, setError] = useState('');
+    const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+    const [deviceId, setDeviceId] = useState<string | undefined>(undefined);
+    const [attempt, setAttempt] = useState(0); // bump to retry
     const handlerRef = useRef(onDescriptor);
     handlerRef.current = onDescriptor;
 
@@ -22,46 +66,59 @@ export function FaceScanner({ title, hint, onDescriptor, onClose, status }: Prop
         let cancelled = false;
         let stream: MediaStream | null = null;
         let timer: ReturnType<typeof setTimeout> | undefined;
+        let busy = false;
 
         const tick = async () => {
             if (cancelled) return;
             const video = videoRef.current;
             let stop = false;
-            if (video && video.readyState >= 2) {
+            if (video && video.readyState >= 2 && !busy) {
+                busy = true;
                 try {
                     const d = await detectDescriptor(video);
                     if (d && !cancelled) stop = !!(await handlerRef.current(d));
                 } catch (e) {
                     console.error('Face detection error', e);
+                } finally {
+                    busy = false;
                 }
             }
             if (!cancelled && !stop) timer = setTimeout(tick, 600);
         };
 
         (async () => {
+            setPhase('loading');
+            setError('');
             try {
-                if (!navigator.mediaDevices?.getUserMedia) {
-                    throw new Error('Este navegador no permite usar la cámara (se requiere HTTPS).');
+                if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+                    throw new Error('insecure');
                 }
-                await loadFaceModels();
-                stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
-                    audio: false,
-                });
+                stream = await openCamera(deviceId);
                 if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
                 if (videoRef.current) {
                     videoRef.current.srcObject = stream;
-                    await videoRef.current.play();
+                    try { await videoRef.current.play(); } catch { /* autoplay quirks: user gesture already happened */ }
                 }
-                setPhase('ready');
-                tick();
+                // Labels/devices are only available after permission is granted
+                try {
+                    const all = await navigator.mediaDevices.enumerateDevices();
+                    if (!cancelled) setDevices(all.filter(d => d.kind === 'videoinput'));
+                } catch { /* ignore */ }
             } catch (e) {
-                console.error(e);
-                setError(e instanceof Error && e.name === 'NotAllowedError'
-                    ? 'Permiso de cámara denegado. Habilítalo en los ajustes del navegador.'
-                    : (e instanceof Error ? e.message : 'No se pudo iniciar la cámara.'));
-                setPhase('error');
+                console.error('Camera error', e);
+                if (!cancelled) { setError(describeError(e)); setPhase('error'); }
+                return;
             }
+            try {
+                await loadFaceModels();
+            } catch (e) {
+                console.error('Model load error', e);
+                if (!cancelled) { setError('No se pudieron cargar los modelos de reconocimiento. Revisa tu conexión y pulsa Reintentar.'); setPhase('error'); }
+                return;
+            }
+            if (cancelled) return;
+            setPhase('ready');
+            tick();
         })();
 
         return () => {
@@ -69,7 +126,7 @@ export function FaceScanner({ title, hint, onDescriptor, onClose, status }: Prop
             if (timer) clearTimeout(timer);
             stream?.getTracks().forEach(t => t.stop());
         };
-    }, []);
+    }, [deviceId, attempt]);
 
     return (
         <div style={{
@@ -105,7 +162,24 @@ export function FaceScanner({ title, hint, onDescriptor, onClose, status }: Prop
                 </div>
 
                 {phase === 'error' && (
-                    <div style={{ marginTop: '12px', color: 'var(--color-danger)' }}>{error}</div>
+                    <div style={{ marginTop: '12px' }}>
+                        <div style={{ color: 'var(--color-danger)', marginBottom: '8px' }}>{error}</div>
+                        <button onClick={() => setAttempt(a => a + 1)} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <RefreshCw size={16} /> Reintentar
+                        </button>
+                    </div>
+                )}
+                {devices.length > 1 && (
+                    <select
+                        value={deviceId ?? ''}
+                        onChange={(e) => setDeviceId(e.target.value || undefined)}
+                        style={{ marginTop: '10px', width: '100%', padding: '8px' }}
+                    >
+                        <option value="">Cámara automática</option>
+                        {devices.map((d, i) => (
+                            <option key={d.deviceId || i} value={d.deviceId}>{d.label || `Cámara ${i + 1}`}</option>
+                        ))}
+                    </select>
                 )}
                 {phase === 'ready' && (
                     <div style={{ marginTop: '12px', textAlign: 'center', fontWeight: 'bold' }}>
