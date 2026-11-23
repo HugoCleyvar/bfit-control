@@ -56,6 +56,8 @@ export function FaceScanner({ title, hint, onDescriptor, onClose, status }: Prop
     const videoRef = useRef<HTMLVideoElement>(null);
     const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading');
     const [error, setError] = useState('');
+    const [stage, setStage] = useState<'camera' | 'models'>('camera');
+    const [slow, setSlow] = useState(false);
     const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
     const [deviceId, setDeviceId] = useState<string | undefined>(undefined);
     const [attempt, setAttempt] = useState(0); // bump to retry
@@ -67,6 +69,7 @@ export function FaceScanner({ title, hint, onDescriptor, onClose, status }: Prop
         let stream: MediaStream | null = null;
         let timer: ReturnType<typeof setTimeout> | undefined;
         let busy = false;
+        let slowTimer: ReturnType<typeof setTimeout> | undefined;
 
         const tick = async () => {
             if (cancelled) return;
@@ -88,10 +91,25 @@ export function FaceScanner({ title, hint, onDescriptor, onClose, status }: Prop
 
         (async () => {
             setPhase('loading');
+            setStage('camera');
+            setSlow(false);
             setError('');
+            slowTimer = setTimeout(() => setSlow(true), 6000);
             try {
                 if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
                     throw new Error('insecure');
+                }
+                // Fail fast if the browser already blocked the camera for this site
+                try {
+                    const perm = await navigator.permissions?.query({ name: 'camera' as PermissionName });
+                    if (perm?.state === 'denied') {
+                        const err = new Error('denied');
+                        err.name = 'NotAllowedError';
+                        throw err;
+                    }
+                } catch (pe) {
+                    if (pe instanceof Error && pe.name === 'NotAllowedError') throw pe;
+                    /* Permissions API unsupported (e.g. Safari): continue */
                 }
                 stream = await openCamera(deviceId);
                 if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
@@ -109,6 +127,7 @@ export function FaceScanner({ title, hint, onDescriptor, onClose, status }: Prop
                 if (!cancelled) { setError(describeError(e)); setPhase('error'); }
                 return;
             }
+            setStage('models');
             try {
                 await loadFaceModels();
             } catch (e) {
@@ -117,6 +136,7 @@ export function FaceScanner({ title, hint, onDescriptor, onClose, status }: Prop
                 return;
             }
             if (cancelled) return;
+            if (slowTimer) clearTimeout(slowTimer);
             setPhase('ready');
             tick();
         })();
@@ -124,6 +144,7 @@ export function FaceScanner({ title, hint, onDescriptor, onClose, status }: Prop
         return () => {
             cancelled = true;
             if (timer) clearTimeout(timer);
+            if (slowTimer) clearTimeout(slowTimer);
             stream?.getTracks().forEach(t => t.stop());
         };
     }, [deviceId, attempt]);
@@ -155,8 +176,16 @@ export function FaceScanner({ title, hint, onDescriptor, onClose, status }: Prop
                         style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }}
                     />
                     {phase === 'loading' && (
-                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
-                            Cargando cámara y modelos...
+                        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff', padding: '16px', textAlign: 'center', gap: '8px' }}>
+                            <div>{stage === 'camera' ? 'Solicitando acceso a la cámara...' : 'Cargando modelos de reconocimiento...'}</div>
+                            {slow && stage === 'camera' && (
+                                <div style={{ fontSize: '13px', opacity: 0.85 }}>
+                                    Tu navegador debe mostrar un aviso para permitir la cámara (arriba a la izquierda, junto a la dirección). Pulsa "Permitir". Si no aparece, toca el candado de la barra de direcciones → Cámara → Permitir, y pulsa Reintentar.
+                                </div>
+                            )}
+                            {slow && stage === 'models' && (
+                                <div style={{ fontSize: '13px', opacity: 0.85 }}>Descargando unos 7 MB la primera vez; puede tardar con conexión lenta.</div>
+                            )}
                         </div>
                     )}
                 </div>
@@ -180,6 +209,11 @@ export function FaceScanner({ title, hint, onDescriptor, onClose, status }: Prop
                             <option key={d.deviceId || i} value={d.deviceId}>{d.label || `Cámara ${i + 1}`}</option>
                         ))}
                     </select>
+                )}
+                {phase === 'loading' && slow && (
+                    <button onClick={() => setAttempt(a => a + 1)} style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <RefreshCw size={16} /> Reintentar
+                    </button>
                 )}
                 {phase === 'ready' && (
                     <div style={{ marginTop: '12px', textAlign: 'center', fontWeight: 'bold' }}>

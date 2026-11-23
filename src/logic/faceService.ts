@@ -8,13 +8,28 @@ export const MATCH_THRESHOLD = 0.5;
 const MODELS_URL = '/models';
 let modelsPromise: Promise<void> | null = null;
 
+// Some phones/tablets/older GPUs cannot start WebGL; fall back to CPU so the feature still works.
+type TfLike = { setBackend(name: string): Promise<boolean>; ready(): Promise<void> };
+
+async function initBackend(): Promise<void> {
+    const tf = faceapi.tf as unknown as TfLike;
+    try {
+        await tf.setBackend('webgl');
+        await tf.ready();
+    } catch (e) {
+        console.warn('WebGL backend unavailable, using CPU', e);
+        await tf.setBackend('cpu');
+        await tf.ready();
+    }
+}
+
 export function loadFaceModels(): Promise<void> {
     if (!modelsPromise) {
-        modelsPromise = Promise.all([
+        modelsPromise = initBackend().then(() => Promise.all([
             faceapi.nets.tinyFaceDetector.loadFromUri(MODELS_URL),
             faceapi.nets.faceLandmark68Net.loadFromUri(MODELS_URL),
             faceapi.nets.faceRecognitionNet.loadFromUri(MODELS_URL),
-        ]).then(() => undefined).catch((err) => {
+        ])).then(() => undefined).catch((err) => {
             modelsPromise = null; // allow retry
             throw err;
         });
