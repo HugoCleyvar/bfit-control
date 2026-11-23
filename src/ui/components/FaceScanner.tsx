@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { X, RefreshCw } from 'lucide-react';
-import { loadFaceModels, detectDescriptor } from '../../logic/faceService';
+import { loadFaceModels, detectDescriptor, detectMetrics, distance } from '../../logic/faceService';
+import { LivenessChallenge, randomChallengeType, instructionFor } from '../../logic/liveness';
 
 /** getUserMedia can hang forever on some drivers/browsers; give each try a deadline. */
 function getStreamWithTimeout(constraints: MediaStreamConstraints, ms: number): Promise<MediaStream> {
@@ -75,13 +76,16 @@ interface Props {
     onDescriptor: (descriptor: number[]) => Promise<boolean | void> | boolean | void;
     onClose: () => void;
     status?: string;
+    /** Require a blink / head-turn challenge before capturing (default true). */
+    liveness?: boolean;
 }
 
-export function FaceScanner({ title, hint, onDescriptor, onClose, status }: Props) {
+export function FaceScanner({ title, hint, onDescriptor, onClose, status, liveness = true }: Props) {
     const videoRef = useRef<HTMLVideoElement>(null);
     const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading');
     const [error, setError] = useState('');
     const [stage, setStage] = useState<'camera' | 'models'>('camera');
+    const [liveMsg, setLiveMsg] = useState('');
     const [slow, setSlow] = useState(false);
     const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
     const [deviceId, setDeviceId] = useState<string | undefined>(undefined);
@@ -96,22 +100,65 @@ export function FaceScanner({ title, hint, onDescriptor, onClose, status }: Prop
         let busy = false;
         let slowTimer: ReturnType<typeof setTimeout> | undefined;
 
+        let challenge = new LivenessChallenge(randomChallengeType());
+        let baseDescriptor: number[] | null = null;
+        let capturing = false;
+
+        const restart = (msg: string, delay = 1200) => {
+            challenge = new LivenessChallenge(randomChallengeType());
+            baseDescriptor = null;
+            setLiveMsg(msg);
+            timer = setTimeout(tick, delay);
+        };
+
         const tick = async () => {
             if (cancelled) return;
             const video = videoRef.current;
-            let stop = false;
-            if (video && video.readyState >= 2 && !busy) {
-                busy = true;
-                try {
+            if (!video || video.readyState < 2 || busy) { timer = setTimeout(tick, 100); return; }
+            busy = true;
+            try {
+                if (!liveness) {
                     const d = await detectDescriptor(video);
-                    if (d && !cancelled) stop = !!(await handlerRef.current(d));
-                } catch (e) {
-                    console.error('Face detection error', e);
-                } finally {
-                    busy = false;
+                    if (d && !cancelled && (await handlerRef.current(d))) return;
+                    timer = setTimeout(tick, 600);
+                    return;
                 }
+
+                const m = await detectMetrics(video);
+                const res = challenge.feed(m, performance.now());
+
+                // Remember who started the challenge, to make sure it is the same person at the end
+                if (challenge.calibrated && !baseDescriptor && !capturing) {
+                    capturing = true;
+                    baseDescriptor = await detectDescriptor(video);
+                    capturing = false;
+                    if (!baseDescriptor) { restart('No se pudo leer el rostro, intenta de nuevo...'); return; }
+                }
+
+                if (!m) setLiveMsg('Coloca tu rostro frente a la cámara');
+                else if (!challenge.calibrated) setLiveMsg('Mira de frente, sin moverte...');
+                else setLiveMsg(instructionFor(challenge.type));
+
+                if (res === 'failed') { restart('Tiempo agotado. Inténtalo de nuevo.'); return; }
+                if (res === 'passed') {
+                    setLiveMsg('Verificando...');
+                    const finalDesc = await detectDescriptor(video);
+                    if (!finalDesc || !baseDescriptor || distance(baseDescriptor, finalDesc) > 0.5) {
+                        restart('Verificación fallida. Inténtalo de nuevo.');
+                        return;
+                    }
+                    if (cancelled) return;
+                    if (await handlerRef.current(finalDesc)) return; // done
+                    restart('', 1500); // not recognised: new challenge for the next attempt
+                    return;
+                }
+                timer = setTimeout(tick, 30);
+            } catch (e) {
+                console.error('Face detection error', e);
+                timer = setTimeout(tick, 600);
+            } finally {
+                busy = false;
             }
-            if (!cancelled && !stop) timer = setTimeout(tick, 600);
         };
 
         (async () => {
@@ -172,7 +219,7 @@ export function FaceScanner({ title, hint, onDescriptor, onClose, status }: Prop
             if (slowTimer) clearTimeout(slowTimer);
             stream?.getTracks().forEach(t => t.stop());
         };
-    }, [deviceId, attempt]);
+    }, [deviceId, attempt, liveness]);
 
     return (
         <div style={{
@@ -242,7 +289,8 @@ export function FaceScanner({ title, hint, onDescriptor, onClose, status }: Prop
                 )}
                 {phase === 'ready' && (
                     <div style={{ marginTop: '12px', textAlign: 'center', fontWeight: 'bold' }}>
-                        {status || 'Buscando rostro...'}
+                        {liveness && liveMsg ? liveMsg : (status || 'Buscando rostro...')}
+                        {liveness && liveMsg && status ? <div style={{ fontSize: '13px', fontWeight: 'normal', marginTop: '4px' }}>{status}</div> : null}
                     </div>
                 )}
             </div>
