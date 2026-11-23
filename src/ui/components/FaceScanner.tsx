@@ -2,17 +2,40 @@ import { useEffect, useRef, useState } from 'react';
 import { X, RefreshCw } from 'lucide-react';
 import { loadFaceModels, detectDescriptor } from '../../logic/faceService';
 
+/** getUserMedia can hang forever on some drivers/browsers; give each try a deadline. */
+function getStreamWithTimeout(constraints: MediaStreamConstraints, ms: number): Promise<MediaStream> {
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            const err = new Error('timeout');
+            err.name = 'CameraTimeout';
+            reject(err);
+        }, ms);
+        navigator.mediaDevices.getUserMedia(constraints).then(
+            (stream) => {
+                if (settled) { stream.getTracks().forEach(t => t.stop()); return; } // arrived too late
+                settled = true; clearTimeout(timer); resolve(stream);
+            },
+            (err) => {
+                if (settled) return;
+                settled = true; clearTimeout(timer); reject(err);
+            }
+        );
+    });
+}
+
 /** Tries progressively looser constraints so laptops, phones and tablets all work. */
 async function openCamera(deviceId?: string): Promise<MediaStream> {
     const tries: MediaStreamConstraints[] = [];
     if (deviceId) tries.push({ video: { deviceId: { exact: deviceId } }, audio: false });
-    tries.push({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
     tries.push({ video: { facingMode: 'user' }, audio: false });
     tries.push({ video: true, audio: false });
     let lastErr: unknown;
     for (const c of tries) {
         try {
-            return await navigator.mediaDevices.getUserMedia(c);
+            return await getStreamWithTimeout(c, 7000);
         } catch (e) {
             lastErr = e;
             const name = e instanceof Error ? e.name : '';
@@ -35,6 +58,8 @@ function describeError(e: unknown): string {
         case 'NotFoundError':
         case 'OverconstrainedError':
             return 'No se encontró ninguna cámara en este dispositivo.';
+        case 'CameraTimeout':
+            return 'La cámara no responde aunque el permiso está concedido. Cierra otras apps o pestañas que la usen (Zoom, Meet, Teams, otra pestaña de esta app), desconecta y vuelve a conectar la cámara si es externa, y pulsa Reintentar. Si persiste, reinicia el navegador o prueba con otro (Chrome, Edge, Firefox).';
         case 'NotReadableError':
         case 'AbortError':
             return 'La cámara está en uso por otra app o pestaña. Ciérrala y pulsa Reintentar.';
